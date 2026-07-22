@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:adam.holter.com)",
+      "WebFetch(domain:dymesty.com)",
+      "WebFetch(domain:www.ctvnews.ca)",
+      "WebFetch(domain:abit.ee)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:techcrunch.com)",
+      "WebFetch(domain:nearbyglasses.com)",
+      "WebFetch(domain:hackaday.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:blog.quarkslab.com)",
+      "WebFetch(domain:asset-group.github.io)",
+      "WebFetch(domain:www.praetorian.com)",
+      "WebFetch(domain:petsymposium.org)",
+      "WebFetch(domain:www.sciencedirect.com)",
+      "WebFetch(domain:cseweb.ucsd.edu)",
+      "WebFetch(domain:dl.acm.org)",
+      "WebFetch(domain:arxiv.org)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)",
+      "Bash(wsl.exe -l -q)",
+      "Bash(wsl.exe --status)",
+      "Skill(simplify)",
+      "Skill(simplify:*)"
+    ]
+  }
+}

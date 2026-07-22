@@ -1,0 +1,9 @@
+# 빌드 산출물
+build/
+
+# 편집기·IDE
+.vscode/
+.idea/
+
+# glog 로그 파일
+*.log

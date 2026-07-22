@@ -1,0 +1,5 @@
+line-length = 100
+
+[lint]
+# E,W = PEP8 스타일 / F = 오류 검사 / I = import 정렬 / N = 이름 규칙 검사
+select = ["E", "W", "F", "I", "N"]
