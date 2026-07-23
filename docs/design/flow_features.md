@@ -227,4 +227,24 @@ const Flow* get_flow(const FiveTuple& key) const;
 
 ---
 
+---
+
+## 다음 작업 (TODO) — AI-feed 레이어 (ZeroMQ 전까지)
+
+2026-07-23 브레인스토밍에서 합의한 범위·설계. 구현은 미룸(오늘 안 함). AI 특징 세트(ml/features.py 27개)가
+확정됐으므로 이제 만들 수 있다. **ZeroMQ 전송·JSON·AI→룰 피드백은 이 다음 단계(제외).**
+
+- **① 특징 벡터 추출**: `flow_to_features(const Flow&) → double[27]`. forward/backward `DirectionStats`에서
+  뽑아 `ml/features.py`와 **동일 순서**로. 순서를 한 곳에 고정하고 features.py를 주석 참조.
+  skew(CICFlowMeter와 계산 차이, 예: 패킷 길이 정의)는 주석으로 명시 — 검증은 B(추론) 단계.
+- **② 방출 시점**: 플로우가 **타임아웃으로 정리될 때** 방출. `FlowManager::cleanup_expired`가 지워지는
+  플로우들을 반환하도록 변경 → `PacketCapture`가 처리. (FIN/RST 조기 방출은 지연 최적화, 나중.)
+- **③ 선별**: 화이트리스트·차단된 출발지는 스킵, 나머지 완성 플로우만 AI 후보.
+- **④ 구멍(인터페이스)**: 추상 `FeatureConsumer`(`consume(vector)`). 오늘의 stub = `LoggingConsumer`(로그로
+  증명). 나중에 ZeroMQ 구현을 이 인터페이스에 끼움(기존 코드 불변).
+- **⑤ 파일 배치(제안)**: 새 `src/ai/`(`feature_vector`, `feature_consumer`, `logging_consumer`) +
+  `flow_manager`(cleanup 반환)·`packet_capture`(배선) 수정. *미확정: 폴더명 `ai/` vs `detect/`, 방출 방식.*
+
+---
+
 *본 문서는 플로우 특징 토대 설계다. 특징 벡터·전송·피드백은 AI 엔진 설계 문서에서 다룬다.*

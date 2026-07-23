@@ -37,7 +37,8 @@
       "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import torch, pandas, numpy, sklearn; import ml.preprocess; from ml.features import FEATURES; print\\('imports OK | torch', torch.__version__, '| FEATURES', len\\(FEATURES\\)\\)\")",
       "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import ml.model; from ml.model import Autoencoder; Autoencoder\\(27\\); print\\('model.py OK'\\)\")",
       "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import ml.train, ml.evaluate; print\\('train+evaluate import OK'\\)\")",
-      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import pandas as pd; from ml.features import FEATURES; cols=[c.strip\\(\\) for c in pd.read_csv\\('data/Monday-WorkingHours.pcap_ISCX.csv', nrows=0\\).columns]; missing=[f for f in FEATURES if f not in cols]; print\\('CSV �÷� ��:', len\\(cols\\)\\); print\\('�츮 Ư¡ �� ���� ��:', missing if missing else '���� \\(���� ����\\)'\\)\")"
+      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import pandas as pd; from ml.features import FEATURES; cols=[c.strip\\(\\) for c in pd.read_csv\\('data/Monday-WorkingHours.pcap_ISCX.csv', nrows=0\\).columns]; missing=[f for f in FEATURES if f not in cols]; print\\('CSV �÷� ��:', len\\(cols\\)\\); print\\('�츮 Ư¡ �� ���� ��:', missing if missing else '���� \\(���� ����\\)'\\)\")",
+      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import ml.preprocess, ml.train, ml.evaluate; from ml.preprocess import load_dataset, split_benign; print\\('refactor import OK'\\)\")"
     ]
   }
 }

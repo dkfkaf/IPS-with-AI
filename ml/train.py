@@ -1,6 +1,5 @@
 """정상 트래픽으로 오토인코더를 학습하고, 임계값을 정하고, 산출물을 저장한다."""
 import argparse
-import glob
 import json
 import os
 
@@ -11,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 from ml.features import FEATURES
 from ml.model import Autoencoder, reconstruction_errors
-from ml.preprocess import extract_features, load_flows, split_benign
+from ml.preprocess import load_dataset, split_benign
 
 ARTIFACTS = os.path.join(os.path.dirname(__file__), "artifacts")
 
@@ -38,9 +37,8 @@ def train_model(train_scaled, epochs=30, batch_size=256, lr=1e-3, seed=42):
 
 
 def run(csv_glob, epochs=30, percentile=99.0):
-    df = load_flows(sorted(glob.glob(csv_glob)))
-    X, labels = extract_features(df)
-    train, val, _test, _attack = split_benign(X, labels)
+    X, labels = load_dataset(csv_glob)
+    train, val, _test = split_benign(X, labels)
 
     scaler = StandardScaler().fit(train)  # 정규화 기준은 '정상 train'에만 맞춘다 (누수 방지)
     model = train_model(scaler.transform(train), epochs=epochs)

@@ -2,7 +2,6 @@
 공격은 라벨(DDoS·PortScan·Infiltration 등)별로 쪼개 봐야 진짜 그림이 나온다 —
 비지도 이상탐지는 볼류메트릭 공격은 잘, 은밀한 공격은 못 잡기 때문이다."""
 import argparse
-import glob
 import json
 import os
 
@@ -11,7 +10,7 @@ import torch
 
 from ml.features import BENIGN_LABEL
 from ml.model import Autoencoder, reconstruction_errors
-from ml.preprocess import extract_features, load_flows, split_benign
+from ml.preprocess import load_dataset, split_benign
 
 ARTIFACTS = os.path.join(os.path.dirname(__file__), "artifacts")
 
@@ -32,9 +31,8 @@ def _errors(model, mean, scale, X):
 
 def run(csv_glob):
     model, mean, scale, threshold = load_artifacts()
-    df = load_flows(sorted(glob.glob(csv_glob)))
-    X, labels = extract_features(df)
-    _train, _val, benign_test, _attack = split_benign(X, labels)  # benign_test로 오탐률
+    X, labels = load_dataset(csv_glob)
+    _train, _val, benign_test = split_benign(X, labels)  # benign_test로 오탐률
 
     # 오탐률: 정상 test 중 임계값을 넘는 비율 (넘으면 정상인데 공격으로 오판 = 오탐)
     fp = float((_errors(model, mean, scale, benign_test) > threshold).mean())
