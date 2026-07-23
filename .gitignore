@@ -7,3 +7,15 @@ build/
 
 # glog 로그 파일
 *.log
+
+# 데이터셋 (CICIDS2017 — 수백 MB, 저장소에 올리지 않는다)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 학습 산출물 (train.py가 생성 — 데이터로 재생성 가능)
+ml/artifacts/

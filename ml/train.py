@@ -63,5 +63,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="CSV glob 패턴, 예: data/*.csv")
     ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--percentile", type=float, default=99.0,
+                    help="임계값 퍼센타일 (낮출수록 탐지율↑ 오탐률↑)")
     args = ap.parse_args()
-    run(args.data, epochs=args.epochs)
+    run(args.data, epochs=args.epochs, percentile=args.percentile)
