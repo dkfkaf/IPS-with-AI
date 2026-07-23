@@ -1,5 +1,5 @@
-#ifndef IPS_SRC_PACKET_SOURCE_H_
-#define IPS_SRC_PACKET_SOURCE_H_
+#ifndef IPS_SRC_CAPTURE_PACKET_SOURCE_H_
+#define IPS_SRC_CAPTURE_PACKET_SOURCE_H_
 
 #include <atomic>
 #include <cstddef>
@@ -20,11 +20,13 @@ class PacketSource {
     // 패킷 1개에 대한 처리 함수. true를 반환하면 통과(ACCEPT), false면 폐기(DROP).
     // NFQUEUE는 콜백 기반으로 동작하므로, next_packet() 반환형 대신
     // 처리 함수를 등록받아 콜백에서 상위로 넘기는 방식을 택했다 (설계 문서 3.3절 참고).
-    // 계약: 페이로드를 읽지 못했거나 처리 함수가 예외를 던진 패킷은 통과(fail-open)로
-    // 처리된다. 차단이 생기는 단계에서 fail-open/fail-closed는 정책 결정으로 재검토할 것.
+    // 계약: 페이로드를 읽지 못했거나 처리 함수가 예외를 던진 패킷은 통과(fail-open)로 처리된다.
     using PacketHandler = std::function<bool(const uint8_t* data, size_t len)>;
 
-    PacketSource(uint16_t queue_num, PacketHandler handler);
+    // 약 1초마다 수신 루프 안에서 불리는 주기 작업 콜백 (BlockList·FlowManager 만료 정리용).
+    using TickHandler = std::function<void()>;
+
+    PacketSource(uint16_t queue_num, PacketHandler handler, TickHandler tick_handler);
     ~PacketSource() { close(); }  // close()가 빠진 종료 경로에서도 자원이 해제되게 (close는 멱등)
 
     // 넷링크 핸들을 두 객체가 공유하면 이중 해제가 되므로 복사를 막는다
@@ -43,10 +45,11 @@ class PacketSource {
 
     uint16_t queue_num_;
     PacketHandler handler_;
+    TickHandler tick_handler_;
     struct nfq_handle* handle_ = nullptr;   // NFQUEUE 핸들
     struct nfq_q_handle* queue_ = nullptr;  // 큐 핸들
     int fd_ = -1;                           // 넷링크 소켓 (handle_ 소유 — 직접 닫지 않음)
     std::atomic<bool> running_{false};
 };
 
-#endif  // IPS_SRC_PACKET_SOURCE_H_
+#endif  // IPS_SRC_CAPTURE_PACKET_SOURCE_H_

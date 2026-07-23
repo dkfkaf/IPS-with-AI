@@ -1,4 +1,4 @@
-#include "packet_source.h"
+#include "capture/packet_source.h"
 
 #include <arpa/inet.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
@@ -8,11 +8,14 @@
 #include <sys/time.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <utility>
 
 #include <glog/logging.h>
+
+#include "common/clock.h"  // Clock (단조 시계)
 
 namespace {
 
@@ -21,13 +24,19 @@ namespace {
 constexpr uint32_t MAX_COPY_BYTES = IP_MAXPACKET;
 // 수신 버퍼 = 최대 패킷 + 넷링크 메타데이터 여유분
 constexpr size_t RECV_BUFFER_BYTES = MAX_COPY_BYTES + 4096;
-// recv 타임아웃 — 패킷이 없어도 이 주기마다 깨어나 stop() 요청을 확인한다
+// recv 타임아웃 — 패킷이 없어도 이 주기마다 깨어나 stop() 요청·틱을 확인한다
 constexpr int RECV_TIMEOUT_SEC = 1;
+// 만료 정리 주기 — recv 타임아웃(1초)과 맞물려 이 주기 안팎으로 정리가 보장된다
+constexpr int CLEANUP_INTERVAL_SEC = 1;
+// ENOBUFS(커널 버퍼 넘침) 경고를 이 주기로 요약한다 — 플러드 시 이 경고 자체가 로그 폭주가 된다
+constexpr int ENOBUFS_LOG_INTERVAL_SEC = 5;
 
 }  // namespace
 
-PacketSource::PacketSource(uint16_t queue_num, PacketHandler handler)
-    : queue_num_(queue_num), handler_(std::move(handler)) {}
+PacketSource::PacketSource(uint16_t queue_num, PacketHandler handler, TickHandler tick_handler)
+    : queue_num_(queue_num),
+      handler_(std::move(handler)),
+      tick_handler_(std::move(tick_handler)) {}
 
 bool PacketSource::open() {
     handle_ = nfq_open();
@@ -97,30 +106,48 @@ bool PacketSource::loop() {
     // 넷링크 메시지 파싱은 4바이트 정렬을 전제하므로 char 배열에 정렬을 명시한다
     alignas(4) char buffer[RECV_BUFFER_BYTES];
 
+    auto last_cleanup = Clock::now();
+    // ENOBUFS 요약용: 마지막 경고 시각과 그 사이 누적 발생 횟수
+    auto last_enobufs_log = Clock::now();
+    uint64_t enobufs_since_log = 0;
+
     while (running_) {
         const ssize_t received = recv(fd_, buffer, sizeof(buffer), 0);
         if (received > 0) {
             // 등록해 둔 콜백(on_packet_received)은 이 호출 안에서 불린다
             nfq_handle_packet(handle_, buffer, static_cast<int>(received));
-            continue;
-        }
-        if (received == 0) {
+        } else if (received == 0) {
             LOG(ERROR) << "넷링크 소켓이 닫힘 — 수신 루프 종료";
             ok = false;
             break;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-            continue;  // 타임아웃 또는 시그널 — running_을 다시 확인하고 계속
-        }
-        if (errno == ENOBUFS) {
-            // 트래픽이 커널 버퍼보다 빠른 상황일 뿐, 프로그램을 중단할 일은 아니다
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            // 타임아웃 또는 시그널 — running_을 다시 확인하고 아래 틱 처리로 진행
+        } else if (errno == ENOBUFS) {
+            // 트래픽이 커널 버퍼보다 빠른 상황일 뿐, 프로그램을 중단할 일은 아니다.
+            // 발생마다 찍지 않고 주기 요약 — 플러드 상황에서 이 경고가 초당 수천 줄이 될 수 있다.
             // TODO: 인라인 전환(3단계) 시 NETLINK_NO_ENOBUFS·수신 버퍼 확대로 유실 자체를 방지
-            LOG(WARNING) << "커널 수신 버퍼 넘침 — 일부 패킷 유실";
-            continue;
+            ++enobufs_since_log;
+            const auto now = Clock::now();
+            if (now - last_enobufs_log >= std::chrono::seconds(ENOBUFS_LOG_INTERVAL_SEC)) {
+                LOG(WARNING) << "커널 수신 버퍼 넘침 — 최근 " << ENOBUFS_LOG_INTERVAL_SEC
+                             << "초간 " << enobufs_since_log << "회 패킷 유실";
+                enobufs_since_log = 0;
+                last_enobufs_log = now;
+            }
+        } else {
+            LOG(ERROR) << "recv 실패: " << std::strerror(errno);
+            ok = false;
+            break;
         }
-        LOG(ERROR) << "recv 실패: " << std::strerror(errno);
-        ok = false;
-        break;
+
+        // 주기 정리: 트래픽이 있으면 recv 사이에, 유휴면 타임아웃 직후에 불린다
+        const auto now = Clock::now();
+        if (now - last_cleanup >= std::chrono::seconds(CLEANUP_INTERVAL_SEC)) {
+            if (tick_handler_) {
+                tick_handler_();
+            }
+            last_cleanup = now;
+        }
     }
     running_ = false;
     return ok;

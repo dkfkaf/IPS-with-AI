@@ -1,13 +1,11 @@
-#include "five_tuple.h"
+#include "common/five_tuple.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <cstdio>
 
-namespace {
-
-// 네트워크 바이트 순서의 IPv4 주소를 점 표기 문자열로 바꾼다.
+// 네트워크 바이트 순서의 IPv4 주소를 점 표기 문자열로 바꾼다 (five_tuple.h 선언).
 // inet_ntoa는 내부 정적 버퍼를 재사용해 한 줄에 IP 두 개를 찍으면 값이 덮이므로 inet_ntop을 쓴다.
 std::string ip_to_string(uint32_t ip_network_order) {
     char buffer[INET_ADDRSTRLEN] = {};
@@ -18,6 +16,8 @@ std::string ip_to_string(uint32_t ip_network_order) {
     }
     return buffer;
 }
+
+namespace {
 
 // 프로토콜 번호를 사람이 읽는 이름으로 바꾼다. 모르는 번호는 숫자 그대로 출력한다.
 std::string protocol_to_string(uint8_t protocol) {

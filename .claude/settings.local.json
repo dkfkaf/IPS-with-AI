@@ -25,7 +25,18 @@
       "Bash(wsl.exe -l -q)",
       "Bash(wsl.exe --status)",
       "Skill(simplify)",
-      "Skill(simplify:*)"
+      "Skill(simplify:*)",
+      "Bash(git mv *)",
+      "Bash(python -m pip install -r ml/requirements.txt)",
+      "Bash(python -c \"import ml.preprocess; print\\('import ok, FEATURES =', len\\(__import__\\('ml.features', fromlist=['FEATURES']\\).FEATURES\\)\\)\")",
+      "PowerShell(foreach \\($c in @\\('py','python','python3'\\)\\) { $p = \\(Get-Command $c -ErrorAction SilentlyContinue\\).Source; if \\($p\\) { Write-Output \"$c -> $p\" } else { Write-Output \"$c -> \\(없음\\)\" } })",
+      "PowerShell(foreach \\($c in @\\('py','python','python3'\\)\\) { $p = \\(Get-Command $c -ErrorAction SilentlyContinue\\).Source; if \\($p\\) { Write-Output \"$c -> $p\" } else { Write-Output \"$c -> \\(없음\\)\" } }; Write-Output \"--- 버전 시도 ---\"; try { & python --version } catch { Write-Output \"python 실행 불가\" })",
+      "PowerShell(& python --version)",
+      "PowerShell(& python -c \"print\\('python works'\\)\")",
+      "PowerShell(python -m pip install -r ml/requirements.txt)",
+      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import torch, pandas, numpy, sklearn; import ml.preprocess; from ml.features import FEATURES; print\\('imports OK | torch', torch.__version__, '| FEATURES', len\\(FEATURES\\)\\)\")",
+      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import ml.model; from ml.model import Autoencoder; Autoencoder\\(27\\); print\\('model.py OK'\\)\")",
+      "PowerShell(& C:\\\\ips-venv\\\\Scripts\\\\python.exe -c \"import ml.train, ml.evaluate; print\\('train+evaluate import OK'\\)\")"
     ]
   }
 }

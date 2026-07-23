@@ -1,17 +1,18 @@
 // PacketParser 단독 테스트.
 // NFQUEUE·root 권한 없이 실행할 수 있다 — 순수 파싱 로직만 검증한다.
-// (ips_stage1_design.md 6장 구현 순서 1번: 파서를 네트워크 없이 먼저 확인)
+// (docs/design/stage1.md 6장 구현 순서 1번: 파서를 네트워크 없이 먼저 확인)
 //
 // 실행: build 디렉터리에서  ./parser_test  (또는 ctest)
 // 종료 코드 0이면 전부 통과.
 
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #include <cstdint>
 #include <cstdio>
 #include <vector>
 
-#include "packet_parser.h"
+#include "capture/packet_parser.h"
 
 namespace {
 
@@ -57,7 +58,6 @@ const std::vector<uint8_t> UDP_PACKET = {
 };
 
 // 10.0.0.2:443 -> 10.0.0.3:50000 — IP 옵션 4바이트가 붙어 ihl=6(헤더 24B)인 TCP 패킷.
-// ihl을 무시하고 20바이트 뒤를 TCP 헤더로 읽으면 옵션이 포트로 잘못 잡힌다.
 const std::vector<uint8_t> IP_OPTIONS_TCP_PACKET = {
     // IP 헤더 (24바이트, 옵션 포함)
     0x46, 0x00, 0x00, 0x2C,  // 버전 4·헤더 24B, 전체 길이 44
@@ -75,13 +75,13 @@ const std::vector<uint8_t> IP_OPTIONS_TCP_PACKET = {
     0x00, 0x00, 0x00, 0x00,  //
 };
 
-// 프로토콜이 ICMP(1)인 패킷 — 포트가 없으므로 5-튜플 대상이 아니다
+// 프로토콜이 ICMP(1)인 패킷 — 포트가 없다 (has_ports=false, 출발지 IP는 유효)
 const std::vector<uint8_t> ICMP_PACKET = {
     0x45, 0x00, 0x00, 0x1C,  //
     0x00, 0x04, 0x00, 0x00,  //
     0x40, 0x01, 0x00, 0x00,  // 프로토콜 ICMP(1)
-    0x0A, 0x00, 0x00, 0x01,  //
-    0x0A, 0x00, 0x00, 0x02,  //
+    0x0A, 0x00, 0x00, 0x01,  // 출발지 10.0.0.1
+    0x0A, 0x00, 0x00, 0x02,  // 목적지 10.0.0.2
     0x08, 0x00, 0x00, 0x00,  // ICMP echo request 앞부분
     0x00, 0x00, 0x00, 0x00,  //
 };
@@ -96,60 +96,84 @@ int main() {
         return parser.parse(bytes.data(), bytes.size());
     };
 
-    // 1. 기본 TCP 패킷 — 다섯 필드가 전부 정확한지
+    // 1. 기본 TCP 패킷 — has_ports·필드·SYN 플래그·total_len
     {
-        const auto tuple = parse(TCP_PACKET);
-        expect(tuple.has_value(), "TCP 패킷 파싱 성공");
-        if (tuple.has_value()) {
-            expect(tuple->src_ip == htonl(0xC0A8000A), "TCP 출발지 IP (네트워크 순서)");
-            expect(tuple->dst_ip == htonl(0x0A000001), "TCP 목적지 IP (네트워크 순서)");
-            expect(tuple->src_port == 12345, "TCP 출발지 포트 (호스트 순서)");
-            expect(tuple->dst_port == 80, "TCP 목적지 포트 (호스트 순서)");
-            expect(tuple->protocol == 6, "TCP 프로토콜 번호");
-            expect(tuple->to_string() == "192.168.0.10:12345 -> 10.0.0.1:80 TCP",
+        const auto p = parse(TCP_PACKET);
+        expect(p.has_value(), "TCP 패킷 파싱 성공");
+        if (p.has_value()) {
+            expect(p->has_ports, "TCP has_ports=true");
+            expect((p->tcp_flags & TH_SYN) != 0, "TCP SYN 플래그 감지");
+            expect(p->total_len == 40, "TCP total_len (호스트 순서)");
+            expect(p->tuple.src_ip == htonl(0xC0A8000A), "TCP 출발지 IP (네트워크 순서)");
+            expect(p->tuple.dst_ip == htonl(0x0A000001), "TCP 목적지 IP (네트워크 순서)");
+            expect(p->tuple.src_port == 12345, "TCP 출발지 포트 (호스트 순서)");
+            expect(p->tuple.dst_port == 80, "TCP 목적지 포트 (호스트 순서)");
+            expect(p->tuple.to_string() == "192.168.0.10:12345 -> 10.0.0.1:80 TCP",
                    "TCP to_string 형식");
         }
     }
 
     // 2. UDP 패킷
     {
-        const auto tuple = parse(UDP_PACKET);
-        expect(tuple.has_value(), "UDP 패킷 파싱 성공");
-        if (tuple.has_value()) {
-            expect(tuple->to_string() == "172.16.0.5:5353 -> 8.8.8.8:53 UDP",
+        const auto p = parse(UDP_PACKET);
+        expect(p.has_value() && p->has_ports, "UDP 패킷 파싱 성공(has_ports)");
+        if (p.has_value()) {
+            expect((p->tcp_flags & TH_SYN) == 0, "UDP는 SYN 플래그 없음");
+            expect(p->tuple.to_string() == "172.16.0.5:5353 -> 8.8.8.8:53 UDP",
                    "UDP to_string 형식");
         }
     }
 
-    // 3. IP 옵션이 있는 패킷 — ihl 기반 오프셋 계산 검증
+    // 3. IP 옵션 패킷 — ihl 기반 오프셋 계산 검증
     {
-        const auto tuple = parse(IP_OPTIONS_TCP_PACKET);
-        expect(tuple.has_value(), "IP 옵션 패킷 파싱 성공");
-        if (tuple.has_value()) {
-            expect(tuple->to_string() == "10.0.0.2:443 -> 10.0.0.3:50000 TCP",
+        const auto p = parse(IP_OPTIONS_TCP_PACKET);
+        expect(p.has_value() && p->has_ports, "IP 옵션 패킷 파싱 성공");
+        if (p.has_value()) {
+            expect(p->tuple.to_string() == "10.0.0.2:443 -> 10.0.0.3:50000 TCP",
                    "IP 옵션 뒤 TCP 헤더 위치 정확");
         }
     }
 
-    // 4. 파싱 대상이 아닌 패킷들 — 전부 nullopt이어야 한다
+    // 4a. nullopt이어야 하는 패킷 — IP 헤더 자체가 안 읽힘
     {
-        expect(!parse(ICMP_PACKET).has_value(), "TCP/UDP 외 프로토콜(ICMP) 거부");
-        expect(!parser.parse(nullptr, 0).has_value(), "빈 입력 거부");
-        expect(!parser.parse(TCP_PACKET.data(), 10).has_value(), "잘린 IP 헤더 거부");
-        expect(!parser.parse(TCP_PACKET.data(), 30).has_value(), "잘린 TCP 헤더 거부");
+        expect(!parser.parse(nullptr, 0).has_value(), "빈 입력 거부(nullopt)");
+        expect(!parser.parse(TCP_PACKET.data(), 10).has_value(), "잘린 IP 헤더 거부(nullopt)");
 
         std::vector<uint8_t> ipv6_like(40, 0x00);
         ipv6_like[0] = 0x60;  // 버전 6
-        expect(!parse(ipv6_like).has_value(), "IPv4 아닌 패킷(IPv6) 거부");
+        expect(!parse(ipv6_like).has_value(), "IPv6 거부(nullopt)");
 
         std::vector<uint8_t> bad_ihl = TCP_PACKET;
-        bad_ihl[0] = 0x44;  // ihl=4 → 헤더 16B, 규격 최소(20B) 미달
-        expect(!parse(bad_ihl).has_value(), "규격 미달 ihl 거부");
+        bad_ihl[0] = 0x44;  // ihl=4 → 헤더 16B, 규격 미달
+        expect(!parse(bad_ihl).has_value(), "규격 미달 ihl 거부(nullopt)");
+    }
+
+    // 4b. IP는 읽히나 전송 헤더가 없음 — has_ports=false, tuple은 유효
+    {
+        const auto icmp = parse(ICMP_PACKET);
+        expect(icmp.has_value() && !icmp->has_ports, "ICMP → has_ports=false");
+        if (icmp.has_value()) {
+            expect(icmp->tuple.src_ip == htonl(0x0A000001), "ICMP도 출발지 IP는 유효");
+        }
 
         std::vector<uint8_t> fragment = TCP_PACKET;
-        fragment[6] = 0x00;  // 조각 오프셋 185 — 뒤쪽 조각에는 TCP 헤더가 없다
-        fragment[7] = 0xB9;
-        expect(!parse(fragment).has_value(), "뒤쪽 IP 조각(fragment) 거부");
+        fragment[6] = 0x00;
+        fragment[7] = 0xB9;  // 조각 오프셋 185 — 뒤쪽 조각
+        const auto frag = parse(fragment);
+        expect(frag.has_value() && !frag->has_ports, "뒤쪽 IP 조각 → has_ports=false");
+
+        const auto trunc_tcp = parser.parse(TCP_PACKET.data(), 30);  // TCP 헤더 잘림
+        expect(trunc_tcp.has_value() && !trunc_tcp->has_ports,
+               "잘린 TCP 헤더 → has_ports=false");
+
+        const auto trunc_udp = parser.parse(UDP_PACKET.data(), 24);  // UDP 헤더 잘림
+        expect(trunc_udp.has_value() && !trunc_udp->has_ports,
+               "잘린 UDP 헤더 → has_ports=false");
+
+        // ihl=6(헤더 24B) 주장 + 버퍼 22B — 옵션 구간 잘림, len < ip_header_len 분기
+        const auto trunc_opt = parser.parse(IP_OPTIONS_TCP_PACKET.data(), 22);
+        expect(trunc_opt.has_value() && !trunc_opt->has_ports,
+               "옵션 잘린 IP 헤더 → has_ports=false");
     }
 
     if (failed_count == 0) {

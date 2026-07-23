@@ -79,10 +79,12 @@ sudo iptables -D INPUT -j NFQUEUE --queue-num 0 --queue-bypass
 
 | 문서 | 내용 |
 | --- | --- |
-| [design.md](design.md) | 개념 설계 — 무엇을, 왜 만드는가 |
-| [ips_stage1_design.md](ips_stage1_design.md) | 1단계 상세 설계 — 패킷 수신·파싱 |
-| [ips_stage2_design.md](ips_stage2_design.md) | 2단계 상세 설계 — 플로우·Rule·차단 |
-| [coding_style.md](coding_style.md) | 코딩 스타일 가이드 — 어떻게 짜는가 |
+| [개념 설계](docs/design/overview.md) | 무엇을, 왜 만드는가 |
+| [1단계 설계](docs/design/stage1.md) | 패킷 수신·파싱 |
+| [2단계 설계](docs/design/stage2.md) | 플로우·Rule·차단 (대응형 IPS) |
+| [플로우 특징 토대](docs/design/flow_features.md) | AI 연동 준비 — 양방향 플로우·특징 원재료 |
+| [코드 원리](docs/code_explained.md) | 코드가 왜 이렇게 짜였나 (1·2단계) |
+| [코딩 스타일](docs/coding_style.md) | 어떻게 짜는가 |
 
 ## 개발 로드맵
 
