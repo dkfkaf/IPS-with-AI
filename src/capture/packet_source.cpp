@@ -2,8 +2,8 @@
 
 #include <arpa/inet.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
+#include <libnfnetlink/libnfnetlink.h>  // nfnl_rcvbufsiz
 #include <linux/netfilter.h>
-#include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
@@ -19,9 +19,12 @@
 
 namespace {
 
-// NFQNL_COPY_PACKET으로 커널에서 복사해 올 최대 바이트 수 — IP_MAXPACKET(65535)은
-// <netinet/ip.h>가 제공하는 IPv4 최대 패킷 크기다
-constexpr uint32_t MAX_COPY_BYTES = IP_MAXPACKET;
+// NFQNL_COPY_PACKET으로 커널에서 복사해 올 최대 바이트 수.
+// 판정에 읽는 건 IP 헤더(옵션 포함 최대 60B)와 TCP 헤더 앞 20B뿐이라 128이면 여유 있다.
+// 패킷 길이 통계는 IP 헤더의 tot_len 필드에서 얻으므로 잘라 와도 값이 그대로고,
+// verdict는 커널의 원본 패킷에 적용되므로 동작도 변하지 않는다.
+// 페이로드 검사(AI 특징 추출)가 필요해지는 단계에서 늘린다.
+constexpr uint32_t MAX_COPY_BYTES = 128;
 // 수신 버퍼 = 최대 패킷 + 넷링크 메타데이터 여유분
 constexpr size_t RECV_BUFFER_BYTES = MAX_COPY_BYTES + 4096;
 // recv 타임아웃 — 패킷이 없어도 이 주기마다 깨어나 stop() 요청·틱을 확인한다
@@ -65,6 +68,13 @@ bool PacketSource::open() {
         close();
         return false;
     }
+
+    // 버스트 유실 대책: 커널 대기 큐를 기본(1024)의 10배로, 넷링크 수신 버퍼를 4MB로.
+    // 복사 단위가 128B라 4MB면 패킷 수만 개 분량이다. IPS에서 유실은 곧 탐지 누락이다.
+    if (nfq_set_queue_maxlen(queue_, 10240) < 0) {
+        LOG(WARNING) << "nfq_set_queue_maxlen 실패 — 기본 큐 길이(1024)로 동작";
+    }
+    nfnl_rcvbufsiz(nfq_nfnlh(handle_), 4 * 1024 * 1024);  // 반환값 = 실제 적용 크기, 실패 없음
 
     fd_ = nfq_fd(handle_);
 
@@ -125,7 +135,7 @@ bool PacketSource::loop() {
         } else if (errno == ENOBUFS) {
             // 트래픽이 커널 버퍼보다 빠른 상황일 뿐, 프로그램을 중단할 일은 아니다.
             // 발생마다 찍지 않고 주기 요약 — 플러드 상황에서 이 경고가 초당 수천 줄이 될 수 있다.
-            // TODO: 인라인 전환(3단계) 시 NETLINK_NO_ENOBUFS·수신 버퍼 확대로 유실 자체를 방지
+            // TODO: 인라인 전환(3단계) 시 NETLINK_NO_ENOBUFS 적용 검토 (수신 버퍼는 open()에서 확대함)
             ++enobufs_since_log;
             const auto now = Clock::now();
             if (now - last_enobufs_log >= std::chrono::seconds(ENOBUFS_LOG_INTERVAL_SEC)) {

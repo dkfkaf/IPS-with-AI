@@ -40,6 +40,8 @@ struct FiveTuple {
 };
 
 // unordered_map<FiveTuple, ...>의 키로 쓰기 위한 해시. 다섯 필드를 섞는다.
+// TODO: 곱셈 해시는 역산이 가능해 해시 충돌 공격(IPS 자체를 느리게 만드는 공격)에
+// 취약하다 — 난수 시드 해시로 교체 예정 (2026-07 성능 리뷰 6번 지적).
 struct FiveTupleHash {
     std::size_t operator()(const FiveTuple& t) const {
         std::size_t h = std::hash<uint32_t>{}(t.src_ip);

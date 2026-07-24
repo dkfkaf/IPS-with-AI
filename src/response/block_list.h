@@ -2,6 +2,7 @@
 #define IPS_SRC_RESPONSE_BLOCK_LIST_H_
 
 #include <cstdint>
+#include <functional>  // std::greater
 #include <queue>
 #include <unordered_map>
 #include <vector>
@@ -21,7 +22,7 @@ class BlockList {
  public:
     void block(uint32_t ip, int ttl_seconds, TimePoint now);  // 신규 차단 또는 만료 연장
     bool is_blocked(uint32_t ip, TimePoint now);              // O(1), 만료면 false
-    void cleanup_expired(TimePoint now);                      // 힙 상단만 확인
+    void cleanup_expired(TimePoint now);                      // 만료분 해제 (틱당 상한 있음)
 
  private:
     std::unordered_map<uint32_t, TimePoint> block_map_;  // IP → 만료 시각 (진실의 원천)

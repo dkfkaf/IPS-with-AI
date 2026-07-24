@@ -2,11 +2,17 @@
 
 #include <netinet/tcp.h>
 
+#include <algorithm>
 #include <chrono>
-#include <iterator>
+#include <vector>
 
 FlowManager::FlowManager(int window_seconds, size_t max_flows, size_t max_sources)
-    : window_seconds_(window_seconds), max_flows_(max_flows), max_sources_(max_sources) {}
+    : window_seconds_(window_seconds), max_flows_(max_flows), max_sources_(max_sources) {
+    // 상한만큼 버킷을 미리 확보 — 맵이 커지는 동안 리해시(그 순간 패킷 처리 정지)가 없다.
+    // 버킷 수가 안 변하니 cleanup_expired가 버킷 위치를 저장해 이어 훑는 것도 안전해진다.
+    flows_.reserve(max_flows_);
+    source_stats_.reserve(max_sources_);
+}
 
 const SourceStats* FlowManager::add_packet(const ParsedPacket& packet, TimePoint now) {
     const uint32_t src_ip = packet.tuple.src_ip;
@@ -78,15 +84,40 @@ const Flow* FlowManager::get_flow(const FiveTuple& key) const {
     return it == flows_.end() ? nullptr : &it->second;
 }
 
+namespace {
+
+// 만료 정리를 틱마다 나눠서 하는 이유: 맵이 상한(기본 10만)까지 차면 전체 순회가
+// 밀리초급인데, 이 작업은 패킷 처리와 같은 스레드에서 돌아 그동안 verdict가 밀린다.
+// 한 틱엔 버킷 1/10만 훑고 위치(cursor)를 저장해 다음 틱에 이어서 돈다.
+// 늦게 지워져도 add_packet이 창·통계를 리셋하므로 판정 정확성에는 영향이 없다.
+template <typename Map, typename Pred>
+void sweep_expired(Map& map, size_t& cursor, Pred is_expired) {
+    const size_t buckets = map.bucket_count();
+    const size_t quota = std::max<size_t>(buckets / 10, 64);  // 작은 맵(테스트)은 사실상 전체
+    std::vector<typename Map::key_type> doomed;  // 버킷 순회 중 erase 대신 모아서 삭제
+    for (size_t i = 0; i < quota && i < buckets; ++i) {
+        const size_t b = (cursor + i) % buckets;
+        for (auto it = map.cbegin(b); it != map.cend(b); ++it) {
+            if (is_expired(it->second)) {
+                doomed.push_back(it->first);
+            }
+        }
+    }
+    cursor = (cursor + quota) % buckets;
+    for (const auto& key : doomed) {
+        map.erase(key);
+    }
+}
+
+}  // namespace
+
 void FlowManager::cleanup_expired(TimePoint now) {
     // 마지막 패킷 이후 FLOW_TIMEOUT_SEC 지난 플로우 제거
     const auto flow_timeout = std::chrono::seconds(FLOW_TIMEOUT_SEC);
-    for (auto it = flows_.begin(); it != flows_.end();) {
-        it = (now - it->second.last_seen >= flow_timeout) ? flows_.erase(it) : std::next(it);
-    }
+    sweep_expired(flows_, flow_cursor_,
+                  [&](const Flow& f) { return now - f.last_seen >= flow_timeout; });
     // 창이 끝난 출발지 통계 제거 (다음 패킷이 어차피 리셋하므로 미리 지워도 안전)
     const auto window = std::chrono::seconds(window_seconds_);
-    for (auto it = source_stats_.begin(); it != source_stats_.end();) {
-        it = (now - it->second.window_start >= window) ? source_stats_.erase(it) : std::next(it);
-    }
+    sweep_expired(source_stats_, source_cursor_,
+                  [&](const SourceStats& s) { return now - s.window_start >= window; });
 }

@@ -27,6 +27,7 @@ class FlowManager {
     // nullptr = max_sources 초과로 신규 출발지 통계 미기록 (호출자는 규칙 검사 생략).
     const SourceStats* add_packet(const ParsedPacket& packet, TimePoint now);
     // FLOW_TIMEOUT_SEC 지난 플로우와 창이 끝난 SourceStats를 제거한다.
+    // 한 틱에 버킷 일부씩 나눠 훑는다 — 패킷 스레드가 정리 때문에 오래 멈추지 않게.
     void cleanup_expired(TimePoint now);
 
     // 정방향/역방향 어느 키로 물어도 같은 플로우를 찾는다. 없으면 nullptr.
@@ -36,6 +37,9 @@ class FlowManager {
  private:
     std::unordered_map<FiveTuple, Flow, FiveTupleHash> flows_;
     std::unordered_map<uint32_t, SourceStats> source_stats_;  // key: src_ip
+    // cleanup_expired가 다음 틱에 이어서 훑을 버킷 위치
+    size_t flow_cursor_ = 0;
+    size_t source_cursor_ = 0;
     const int window_seconds_;
     const size_t max_flows_;
     const size_t max_sources_;

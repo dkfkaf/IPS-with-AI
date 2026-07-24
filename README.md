@@ -99,3 +99,11 @@ sudo iptables -D INPUT -j NFQUEUE --queue-num 0 --queue-bypass
 
 - 공격 시뮬레이션은 반드시 격리된 가상환경에서만 진행합니다.
 - 본 프로젝트는 교육·연구 목적의 졸업 작품입니다.
+
+## 참고 문헌
+https://maro5397.tistory.com/105
+https://rupijun.tistory.com/entry/IPSIntrusion-Protection-System-%EB%84%A4%ED%8A%B8%EC%9B%8C%ED%81%AC-%EC%B9%A8%EC%9E%85-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%B0%A8%EB%8B%A8-%EB%B0%8F-%EC%98%88%EB%B0%A9-%EC%8B%9C%EC%8A%A4%ED%85%9C
+https://gilgil.gitlab.io/2019/02/11/1.html
+https://gilgil.gitlab.io/2019/02/14/1.html
+https://gilgil.gitlab.io/2019/02/15/1.html
+https://gilgil.gitlab.io/2019/02/20/1.html

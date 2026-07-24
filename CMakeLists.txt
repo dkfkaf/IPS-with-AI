@@ -54,6 +54,7 @@ add_test(NAME parser_test COMMAND parser_test)
 add_executable(block_list_test
     tests/block_list_test.cpp
     src/response/block_list.cpp
+    src/common/five_tuple.cpp  # block_list가 로그에서 ip_to_string() 사용 → 링크에 필요
 )
 target_link_libraries(block_list_test PRIVATE GTest::gtest_main PkgConfig::GLOG)
 add_test(NAME block_list_test COMMAND block_list_test)
