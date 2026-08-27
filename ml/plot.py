@@ -2,6 +2,7 @@
   1) 복원오차 분포 (정상 vs 공격)  2) 공격 종류별 탐지율  3) ROC 곡선 + AUC
 결과: ml/artifacts/plots/*.png.  사용법: python -m ml.plot --data "data/*.csv"
 """
+
 import argparse
 import os
 
@@ -77,8 +78,13 @@ def _plot_roc(benign_err, attack_err, threshold, path):
     plt.figure(figsize=(6, 6))
     plt.plot(fpr, tpr, label=f"ROC (AUC={auc:.3f})")
     plt.plot([0, 1], [0, 1], "k--", alpha=0.4, label="무작위")
-    plt.scatter([cur_fpr], [cur_tpr], color="red", zorder=5,
-                label=f"현재 임계값 (오탐 {cur_fpr:.2f}, 탐지 {cur_tpr:.2f})")
+    plt.scatter(
+        [cur_fpr],
+        [cur_tpr],
+        color="red",
+        zorder=5,
+        label=f"현재 임계값 (오탐 {cur_fpr:.2f}, 탐지 {cur_tpr:.2f})",
+    )
     plt.xlabel("오탐률 (False Positive Rate)")
     plt.ylabel("탐지율 (True Positive Rate)")
     plt.title("ROC 곡선")
@@ -97,10 +103,12 @@ def run(csv_glob):
     benign_err = _errors(model, mean, scale, benign_test)
 
     os.makedirs(PLOTS, exist_ok=True)
-    _plot_error_distribution(benign_err, attack_err, threshold,
-                             os.path.join(PLOTS, "error_distribution.png"))
-    _plot_detection_by_type(attack_err, labels[attack_mask], threshold,
-                            os.path.join(PLOTS, "detection_by_type.png"))
+    _plot_error_distribution(
+        benign_err, attack_err, threshold, os.path.join(PLOTS, "error_distribution.png")
+    )
+    _plot_detection_by_type(
+        attack_err, labels[attack_mask], threshold, os.path.join(PLOTS, "detection_by_type.png")
+    )
     _plot_roc(benign_err, attack_err, threshold, os.path.join(PLOTS, "roc.png"))
     print(f"그래프 3장 저장 완료 → {PLOTS}")
 

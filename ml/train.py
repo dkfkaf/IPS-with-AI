@@ -1,4 +1,5 @@
 """정상 트래픽으로 오토인코더를 학습하고, 임계값을 정하고, 산출물을 저장한다."""
+
 import argparse
 import json
 import os
@@ -51,8 +52,16 @@ def run(csv_glob, epochs=30, percentile=99.0):
     torch.save(model.state_dict(), os.path.join(ARTIFACTS, "autoencoder.pt"))
     np.savez(os.path.join(ARTIFACTS, "scaler.npz"), mean=scaler.mean_, scale=scaler.scale_)
     with open(os.path.join(ARTIFACTS, "metadata.json"), "w") as f:
-        json.dump({"threshold": threshold, "features": FEATURES,
-                   "n_features": len(FEATURES), "percentile": percentile}, f, indent=2)
+        json.dump(
+            {
+                "threshold": threshold,
+                "features": FEATURES,
+                "n_features": len(FEATURES),
+                "percentile": percentile,
+            },
+            f,
+            indent=2,
+        )
     print(f"저장 완료 → {ARTIFACTS} (임계값={threshold:.6f})")
     return model, scaler, threshold
 
@@ -61,7 +70,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="CSV glob 패턴, 예: data/*.csv")
     ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--percentile", type=float, default=99.0,
-                    help="임계값 퍼센타일 (낮출수록 탐지율↑ 오탐률↑)")
+    ap.add_argument(
+        "--percentile", type=float, default=99.0, help="임계값 퍼센타일 (낮출수록 탐지율↑ 오탐률↑)"
+    )
     args = ap.parse_args()
     run(args.data, epochs=args.epochs, percentile=args.percentile)

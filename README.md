@@ -107,3 +107,4 @@ https://gilgil.gitlab.io/2019/02/11/1.html
 https://gilgil.gitlab.io/2019/02/14/1.html
 https://gilgil.gitlab.io/2019/02/15/1.html
 https://gilgil.gitlab.io/2019/02/20/1.html
+https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART002794059

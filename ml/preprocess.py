@@ -1,4 +1,5 @@
 """CSV를 읽어 정리하고, 학습에 쓸 특징 배열과 라벨을 뽑는다."""
+
 import glob
 
 import numpy as np
@@ -42,6 +43,6 @@ def split_benign(X, labels, ratios=(0.6, 0.2, 0.2), seed=42):
     n_train = int(len(benign) * ratios[0])
     n_val = int(len(benign) * ratios[1])
     train = benign[idx[:n_train]]
-    val = benign[idx[n_train:n_train + n_val]]
-    test = benign[idx[n_train + n_val:]]
+    val = benign[idx[n_train : n_train + n_val]]
+    test = benign[idx[n_train + n_val :]]
     return train, val, test
