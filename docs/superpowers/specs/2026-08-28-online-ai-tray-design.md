@@ -137,6 +137,9 @@ Python은 shell을 거치지 않고 Qt의 program/argument 분리 기능으로 �
 ```
 
 - `/bin/sh -c`나 문자열 명령 조립을 사용하지 않는다.
+- Python runtime package는 root 소유 `/opt/ips-with-ai/python-packages`에 설치하고, 자식의
+  `PYTHONPATH`를 이 경로와 root 소유 저장소 루트로만 구성한다.
+- `PYTHONNOUSERSITE=1`로 일반 user site package를 읽지 않는다.
 - endpoint에는 센서 PID를 넣어 이전 실행이나 다른 프로세스와 이름이 겹치지 않게 한다.
 - Python은 bind 전에 `umask(077)`을 적용해 IPC 파일을 root만 사용할 수 있게 한다.
 - C++과 Python socket은 `linger=0`으로 닫아 종료 시 오래 기다리지 않게 한다.
@@ -172,7 +175,7 @@ Flow ID는 현재 센서 인스턴스 ID와 증가 번호를 결합해 한 실�
 - IP는 사람이 읽을 수 있는 IPv4 문자열로 보낸다.
 - protocol은 TCP 6, UDP 17처럼 IP protocol 번호를 쓴다.
 - `first_seen_ms`와 `last_seen_ms`는 Unix epoch millisecond다.
-- `end_reason`은 `fin`, `rst`, `timeout` 중 하나다.
+- `end_reason`은 기존 C++ 변환값인 `tcp_fin`, `tcp_reset`, `timeout` 중 하나다.
 - 특징은 학습 전 원래 단위이며 Python이 저장된 scaler로 정규화한다.
 
 ## 8. Python에서 C++로 보내는 응답
@@ -230,7 +233,8 @@ C++은 다음 조건을 모두 만족한 성공 응답만 사용한다.
 - `feature_schema_version`: C++ 특징 계약 버전, 현재 값 1
 - `model_version`: 재학습마다 바뀌는 UTC 기반 문자열, 예: `ae-20260828T120000Z`
 
-서버는 모델을 `map_location="cpu"`, `weights_only=True`로 읽고 `eval()` 상태로 둔다. 각 요청은
+서버는 PyTorch 2.1 이상에서 모델을 `map_location="cpu"`, `weights_only=True`로 읽고 `eval()`
+상태로 둔다. 각 요청은
 다음 순서로 처리한다.
 
 1. 요청 JSON과 필수 필드를 검증한다.
@@ -399,6 +403,7 @@ root GUI 로그인이다. Python 자식도 같은 root 권한을 상속한다.
 root가 Python과 모델을 읽으므로 다음 방어를 적용한다.
 
 - shell을 사용하지 않고 `/usr/bin/python3`를 절대 경로로 실행
+- Python package는 root만 수정할 수 있는 `/opt/ips-with-ai/python-packages`에서 로드
 - artifact 경로 밖의 파일을 모델로 선택할 수 없게 고정된 파일 이름 사용
 - 모델·scaler·metadata가 일반 파일인지 검사
 - group/other write가 가능한 artifact는 거부하고 배포 문서에 root 소유 권한을 명시
@@ -470,8 +475,8 @@ Qt 함수나 로깅을 호출하지 않고 `sig_atomic_t` 플래그만 세운다
 | `CMakeLists.txt` | Qt5, libzmq, cppzmq 및 새 소스 연결 |
 | `README.md` | Ubuntu 의존성, root GUI 실행, 수동 확인 방법 |
 
-필요한 Ubuntu 패키지는 최소한 `qtbase5-dev`, `libzmq3-dev`, `cppzmq-dev`이며 Python 쪽은 기존
-요구사항에 `pyzmq`를 유지한다.
+필요한 Ubuntu 패키지는 최소한 `qtbase5-dev`, `libzmq3-dev`, `cppzmq-dev`, `python3-pip`이다.
+온라인 Python runtime은 `torch>=2.1`, `numpy`, `pyzmq`를 별도 requirements로 고정한다.
 
 ## 19. 완료 판정용 수동 검증
 
