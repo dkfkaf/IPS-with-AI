@@ -19,3 +19,6 @@ venv/
 
 # 학습 산출물 (train.py가 생성 — 데이터로 재생성 가능)
 ml/artifacts/
+
+# Superpowers brainstorming companion session files
+.superpowers/
