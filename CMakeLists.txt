@@ -49,6 +49,7 @@ add_executable(ips
     src/response/block_list.cpp
     src/response/whitelist.cpp
     src/config/config.cpp
+    src/ui/tray_controller.cpp
 )
 target_include_directories(ips PRIVATE ${CPPZMQ_INCLUDE_DIR})
 target_link_libraries(ips PRIVATE
