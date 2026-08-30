@@ -41,6 +41,14 @@ std::optional<Config> parse_config(const std::string& json_text) {
         const auto rules = j.value("rules", nlohmann::json::object());
         const auto port_scan = rules.value("port_scan", nlohmann::json::object());
         const auto syn_flood = rules.value("syn_flood", nlohmann::json::object());
+        const auto ai = j.value("ai", nlohmann::json::object());
+
+        if (!ai.is_object() ||
+            (ai.contains("enabled") && !ai.at("enabled").is_boolean()) ||
+            (ai.contains("artifact_dir") && !ai.at("artifact_dir").is_string())) {
+            LOG(ERROR) << "config.json AI 필드 타입 오류";
+            return std::nullopt;
+        }
 
         const auto queue_num = read_nonnegative_integer(j, "queue_num", cfg.queue_num);
         const auto block_ttl_seconds =
@@ -51,10 +59,22 @@ std::optional<Config> parse_config(const std::string& json_text) {
             port_scan, "distinct_port_threshold", cfg.distinct_port_threshold);
         const auto syn_threshold =
             read_nonnegative_integer(syn_flood, "syn_threshold", cfg.syn_threshold);
+        const auto ai_queue_capacity =
+            read_nonnegative_integer(ai, "queue_capacity", cfg.ai.queue_capacity);
+        const auto ai_startup_timeout =
+            read_nonnegative_integer(ai, "startup_timeout_ms", cfg.ai.startup_timeout_ms);
+        const auto ai_response_timeout =
+            read_nonnegative_integer(ai, "response_timeout_ms", cfg.ai.response_timeout_ms);
+        const auto ai_max_restarts =
+            read_nonnegative_integer(ai, "max_restarts", cfg.ai.max_restarts);
+        const auto ai_restart_reset = read_nonnegative_integer(
+            ai, "restart_reset_seconds", cfg.ai.restart_reset_seconds);
 
         if (!queue_num.has_value() || !block_ttl_seconds.has_value() ||
             !window_seconds.has_value() || !distinct_port_threshold.has_value() ||
-            !syn_threshold.has_value()) {
+            !syn_threshold.has_value() || !ai_queue_capacity.has_value() ||
+            !ai_startup_timeout.has_value() || !ai_response_timeout.has_value() ||
+            !ai_max_restarts.has_value() || !ai_restart_reset.has_value()) {
             LOG(ERROR) << "config.json 정수 필드 타입 오류";
             return std::nullopt;
         }
@@ -72,12 +92,32 @@ std::optional<Config> parse_config(const std::string& json_text) {
             LOG(ERROR) << "config.json 값 범위 오류";
             return std::nullopt;
         }
+        if (*ai_queue_capacity == 0 || *ai_queue_capacity > 65536 ||
+            *ai_startup_timeout < 1000 ||
+            *ai_startup_timeout > 60000 || *ai_response_timeout < 100 ||
+            *ai_response_timeout > 60000 || *ai_max_restarts > 10 ||
+            *ai_restart_reset == 0 || *ai_restart_reset > 3600) {
+            LOG(ERROR) << "config.json AI 값 범위 오류";
+            return std::nullopt;
+        }
+
+        cfg.ai.enabled = ai.value("enabled", cfg.ai.enabled);
+        cfg.ai.artifact_dir = ai.value("artifact_dir", cfg.ai.artifact_dir);
+        if (cfg.ai.artifact_dir.empty()) {
+            LOG(ERROR) << "config.json ai.artifact_dir가 비어 있음";
+            return std::nullopt;
+        }
 
         cfg.queue_num = static_cast<uint16_t>(*queue_num);
         cfg.block_ttl_seconds = static_cast<int>(*block_ttl_seconds);
         cfg.window_seconds = static_cast<int>(*window_seconds);
         cfg.distinct_port_threshold = static_cast<size_t>(*distinct_port_threshold);
         cfg.syn_threshold = static_cast<uint32_t>(*syn_threshold);
+        cfg.ai.queue_capacity = static_cast<size_t>(*ai_queue_capacity);
+        cfg.ai.startup_timeout_ms = static_cast<int>(*ai_startup_timeout);
+        cfg.ai.response_timeout_ms = static_cast<int>(*ai_response_timeout);
+        cfg.ai.max_restarts = static_cast<int>(*ai_max_restarts);
+        cfg.ai.restart_reset_seconds = static_cast<int>(*ai_restart_reset);
     } catch (const nlohmann::json::exception& e) {
         LOG(ERROR) << "config.json 파싱 실패: " << e.what();
         return std::nullopt;  // 깨진 설정으로 조용히 도는 것보다 시작 중단이 안전

@@ -1,5 +1,6 @@
-torch
+-r runtime-requirements.txt
+
 pandas
-numpy
 scikit-learn
 matplotlib
+ruff

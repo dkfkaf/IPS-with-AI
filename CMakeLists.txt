@@ -10,9 +10,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(NFQUEUE REQUIRED IMPORTED_TARGET libnetfilter_queue)
 pkg_check_modules(GLOG REQUIRED IMPORTED_TARGET libglog)
+pkg_check_modules(ZMQ REQUIRED IMPORTED_TARGET libzmq)
+
+find_path(CPPZMQ_INCLUDE_DIR zmq.hpp)
+if(NOT CPPZMQ_INCLUDE_DIR)
+    message(FATAL_ERROR "cppzmq header zmq.hpp not found (Ubuntu: sudo apt install cppzmq-dev)")
+endif()
 
 # nlohmann/json — 헤더 온리 설정 파서. Ubuntu: sudo apt install nlohmann-json3-dev
 find_package(nlohmann_json REQUIRED)
+find_package(Qt5 5.12 REQUIRED COMPONENTS Core Widgets)
 # Google Test — 2단계에서 도입 (coding_style.md 6.3). Ubuntu: sudo apt install libgtest-dev
 find_package(GTest REQUIRED)
 
@@ -40,7 +47,15 @@ add_executable(ips
     src/response/whitelist.cpp
     src/config/config.cpp
 )
-target_link_libraries(ips PRIVATE PkgConfig::NFQUEUE PkgConfig::GLOG nlohmann_json::nlohmann_json)
+target_include_directories(ips PRIVATE ${CPPZMQ_INCLUDE_DIR})
+target_link_libraries(ips PRIVATE
+    PkgConfig::NFQUEUE
+    PkgConfig::GLOG
+    PkgConfig::ZMQ
+    nlohmann_json::nlohmann_json
+    Qt5::Core
+    Qt5::Widgets
+)
 
 enable_testing()
 
