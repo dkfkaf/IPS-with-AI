@@ -1,5 +1,6 @@
 #include "capture/packet_capture.h"
 
+#include <exception>
 #include <memory>
 #include <optional>
 #include <string>
@@ -8,17 +9,20 @@
 
 #include <glog/logging.h>
 
-#include "common/clock.h"
 #include "ai/flow_features.h"
+#include "common/clock.h"
+#include "common/five_tuple.h"
 #include "detect/port_scan_rule.h"
 #include "detect/syn_flood_rule.h"
 
 PacketCapture::PacketCapture(const Config& config, Whitelist whitelist,
-                             std::unique_ptr<FlowConsumer> flow_consumer)
+                             std::unique_ptr<FlowConsumer> flow_consumer,
+                             AiBlockHandler ai_block_handler)
     : block_ttl_seconds_(config.block_ttl_seconds),
       whitelist_(std::move(whitelist)),
       flow_manager_(config.window_seconds),
       flow_consumer_(std::move(flow_consumer)),
+      ai_block_handler_(std::move(ai_block_handler)),
       steady_anchor_(Clock::now()),
       wall_anchor_(std::chrono::system_clock::now()),
       sensor_instance_id_(std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(
@@ -85,6 +89,7 @@ bool PacketCapture::handle_inbound(const ParsedPacket& packet, TimePoint now) {
         const Rule* hit = rule_engine_.check(*stats);
         if (hit != nullptr) {
             flow_manager_.discard_source_flows(src_ip);
+            rule_blocks_.fetch_add(1, std::memory_order_relaxed);
             block_list_.block(src_ip, block_ttl_seconds_, now);
             LOG(WARNING) << "규칙 '" << hit->name()
                          << "' 위반 → 차단: " << packet.tuple.to_string();
@@ -116,11 +121,46 @@ bool PacketCapture::handle_outbound(const ParsedPacket& packet, TimePoint now) {
 
 void PacketCapture::on_tick() {
     const TimePoint now = Clock::now();
+    apply_ai_decisions(now);
     std::vector<EndedFlow> expired = flow_manager_.cleanup_expired(now);
     for (EndedFlow& flow : expired) {
         consume_flow(std::move(flow));
     }
     block_list_.cleanup_expired(now);
+}
+
+void PacketCapture::apply_ai_decisions(TimePoint now) {
+    for (AiDecision& decision : flow_consumer_->drain_decisions()) {
+        if (!decision.anomaly) {
+            continue;
+        }
+        const uint32_t source_ip = decision.record.key.src_ip;
+        if (whitelist_.is_whitelisted(source_ip)) {
+            ai_whitelisted_.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        if (block_list_.is_blocked(source_ip, now)) {
+            ai_duplicates_.fetch_add(1, std::memory_order_relaxed);
+            LOG(INFO) << "AI_DECISION action=duplicate flow_id=" << decision.record.flow_id;
+            continue;
+        }
+        flow_manager_.discard_source_flows(source_ip);
+        block_list_.block(source_ip, block_ttl_seconds_, now);
+        ai_new_blocks_.fetch_add(1, std::memory_order_relaxed);
+        LOG(WARNING) << "AI_DECISION action=blocked flow_id=" << decision.record.flow_id
+                     << " source_ip=" << ip_to_string(source_ip)
+                     << " score=" << decision.score << " threshold=" << decision.threshold
+                     << " model_version=" << decision.model_version;
+        if (ai_block_handler_) {
+            try {
+                ai_block_handler_(AiBlockEvent{decision.record.flow_id, source_ip, decision.score,
+                                               decision.threshold, block_ttl_seconds_,
+                                               decision.model_version});
+            } catch (const std::exception& error) {
+                LOG(ERROR) << "AI block handler 오류: " << error.what();
+            }
+        }
+    }
 }
 
 void PacketCapture::consume_flow(EndedFlow ended_flow) {
@@ -147,9 +187,16 @@ void PacketCapture::consume_flow(EndedFlow ended_flow) {
         FLOW_FEATURE_SCHEMA_VERSION,
         flow_to_features(ended_flow.flow),
     };
-    if (!flow_consumer_->consume(std::move(record))) {
-        LOG(WARNING) << "AI_FLOW_QUEUE_FULL tuple=" << ended_flow.flow.key.to_string();
-    }
+    flow_consumer_->consume(std::move(record));
+}
+
+CaptureStatsSnapshot PacketCapture::capture_stats() const {
+    return CaptureStatsSnapshot{
+        rule_blocks_.load(std::memory_order_relaxed),
+        ai_new_blocks_.load(std::memory_order_relaxed),
+        ai_duplicates_.load(std::memory_order_relaxed),
+        ai_whitelisted_.load(std::memory_order_relaxed),
+    };
 }
 
 int64_t PacketCapture::to_epoch_ms(TimePoint point) const {

@@ -1,9 +1,11 @@
 #ifndef IPS_SRC_CAPTURE_PACKET_CAPTURE_H_
 #define IPS_SRC_CAPTURE_PACKET_CAPTURE_H_
 
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -20,12 +22,16 @@
 // 판정 파이프라인을 조율하는 총괄자. Config에서 각 구성 요소를 만들어 배선한다.
 class PacketCapture {
  public:
+    using AiBlockHandler = std::function<void(const AiBlockEvent&)>;
+
     // Whitelist는 main이 적재·검증(fail-fast)해 주입한다 — 형식 검증은 한 계층에만 둔다.
     PacketCapture(const Config& config, Whitelist whitelist,
-                  std::unique_ptr<FlowConsumer> flow_consumer);
+                  std::unique_ptr<FlowConsumer> flow_consumer,
+                  AiBlockHandler ai_block_handler = {});
 
     bool start();  // 수신원을 열고 수신 루프 시작 — stop()까지 블로킹
     void stop();   // 수신 중단 요청 (시그널 핸들러에서 불러도 안전)
+    CaptureStatsSnapshot capture_stats() const;
 
  private:
     bool on_packet(const uint8_t* data, size_t len,
@@ -33,6 +39,7 @@ class PacketCapture {
     bool handle_inbound(const ParsedPacket& packet, TimePoint now);
     bool handle_outbound(const ParsedPacket& packet, TimePoint now);
     void on_tick();  // 약 1초마다 만료 정리
+    void apply_ai_decisions(TimePoint now);
     void consume_flow(EndedFlow ended_flow);
     int64_t to_epoch_ms(TimePoint point) const;
     std::string next_flow_id();
@@ -44,6 +51,11 @@ class PacketCapture {
     FlowManager flow_manager_;
     RuleEngine rule_engine_;
     std::unique_ptr<FlowConsumer> flow_consumer_;
+    AiBlockHandler ai_block_handler_;
+    std::atomic<uint64_t> rule_blocks_{0};
+    std::atomic<uint64_t> ai_new_blocks_{0};
+    std::atomic<uint64_t> ai_duplicates_{0};
+    std::atomic<uint64_t> ai_whitelisted_{0};
     TimePoint steady_anchor_;
     std::chrono::system_clock::time_point wall_anchor_;
     std::string sensor_instance_id_;
