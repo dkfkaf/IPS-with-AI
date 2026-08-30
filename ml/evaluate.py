@@ -45,7 +45,7 @@ def run(csv_glob):
     print("--- 공격 종류별 ---")
     for label in sorted(set(attack_labels)):
         group = attack_errors[attack_labels == label]
-        rate = float((group > threshold).mean())
+        rate = float((group > artifacts.threshold).mean())
         print(f"  {str(label):<30} {rate:.3f}  (n={len(group)})")
     return false_positive_rate, detection_rate
 

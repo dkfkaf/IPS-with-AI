@@ -200,12 +200,23 @@ void AsyncAiClient::run() {
                 socket_generation = generation;
             }
 
+            const auto request_started = std::chrono::steady_clock::now();
             const std::string request = serialize_flow_request(in_flight);
             if (!socket->send(zmq::buffer(request), zmq::send_flags::none)) {
                 socket.reset();
                 fail_transport("AI 요청 전송 시간 초과", true, generation);
                 continue;
             }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - request_started);
+            const int remaining_timeout =
+                response_timeout_ms_ - static_cast<int>(elapsed.count());
+            if (remaining_timeout <= 0) {
+                socket.reset();
+                fail_transport("AI 요청 전체 시간 초과", true, generation);
+                continue;
+            }
+            socket->set(zmq::sockopt::rcvtimeo, remaining_timeout);
             zmq::message_t reply;
             if (!socket->recv(reply, zmq::recv_flags::none)) {
                 socket.reset();

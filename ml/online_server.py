@@ -1,5 +1,7 @@
 """완료된 Flow 하나씩 받아 오토인코더 이상 점수를 반환하는 REP 서버."""
 
+from __future__ import annotations
+
 import argparse
 import ipaddress
 import json

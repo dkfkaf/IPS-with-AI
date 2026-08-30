@@ -331,13 +331,13 @@ Python에는 한 번에 한 Flow만 보낸다. 응답을 받은 뒤 다음 Flow�
 
 ## 13. 응답 정지와 자동 재시작
 
-기본 시작 제한시간은 10초, 한 요청의 응답 제한시간은 2초다.
+기본 시작 제한시간은 10초, 한 요청의 전송과 응답을 합친 전체 제한시간은 2초다.
 
 다음 상황은 AI 프로세스 실패로 본다.
 
 - 10초 안에 올바른 `AI_READY`가 오지 않음
 - Python 프로세스가 예기치 않게 종료됨
-- 요청 후 2초 안에 응답이 오지 않음
+- 요청 전송 시작 후 2초 안에 응답이 오지 않음
 - ZeroMQ 송수신에서 복구 불가능한 오류가 발생함
 
 실패 처리 순서는 다음과 같다.
@@ -403,10 +403,11 @@ root GUI 로그인이다. Python 자식도 같은 root 권한을 상속한다.
 root가 Python과 모델을 읽으므로 다음 방어를 적용한다.
 
 - shell을 사용하지 않고 `/usr/bin/python3`를 절대 경로로 실행
-- Python package는 root만 수정할 수 있는 `/opt/ips-with-ai/python-packages`에서 로드
+- 저장소 코드와 Python package 경로는 root 소유이고 group/other 쓰기가 불가능한지 실행 전에 검사
+- Python 자식에는 고정된 최소 환경변수만 전달
 - artifact 경로 밖의 파일을 모델로 선택할 수 없게 고정된 파일 이름 사용
-- 모델·scaler·metadata가 일반 파일인지 검사
-- group/other write가 가능한 artifact는 거부하고 배포 문서에 root 소유 권한을 명시
+- artifact 경로의 symbolic link와 경로 이탈을 거부
+- 모델·scaler·metadata가 root 소유 일반 파일이고 group/other 쓰기가 불가능한지 검사
 - PyTorch 가중치는 `weights_only=True`로 로드
 - 외부 네트워크 TCP가 아닌 로컬 IPC만 사용
 - IPC 권한은 root 전용으로 제한
@@ -428,7 +429,7 @@ model_version=<version>
 
 상태 화면에는 다음 누계를 표시한다.
 
-- AI 전송 성공 수
+- AI 입력 큐 등록 수
 - 큐 포화 폐기 수
 - 정상 응답 수
 - 이상 응답 수

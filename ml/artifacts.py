@@ -1,6 +1,7 @@
 """학습·평가·온라인 추론이 공유하는 artifact 로더."""
 
 import json
+import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,25 +23,49 @@ class LoadedArtifacts:
     model_version: str
 
 
+def _require_root_owned(path: Path, path_stat: os.stat_result) -> None:
+    if path_stat.st_uid != 0:
+        raise PermissionError(f"root 소유 경로가 아님: {path}")
+    if path_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise PermissionError(f"group/other 쓰기 가능 경로: {path}")
+
+
+def _require_secure_directory_tree(directory: Path) -> None:
+    current = Path(directory.anchor)
+    for part in directory.parts[1:]:
+        current /= part
+        path_stat = current.lstat()
+        if stat.S_ISLNK(path_stat.st_mode):
+            raise PermissionError(f"symbolic link 디렉터리는 허용하지 않음: {current}")
+        if not stat.S_ISDIR(path_stat.st_mode):
+            raise ValueError(f"artifact 경로가 디렉터리가 아님: {current}")
+        _require_root_owned(current, path_stat)
+
+
 def _require_regular_file(path: Path, require_secure_permissions: bool) -> None:
-    file_stat = path.stat()
-    if not path.is_file():
+    file_stat = path.lstat() if require_secure_permissions else path.stat()
+    if require_secure_permissions and stat.S_ISLNK(file_stat.st_mode):
+        raise PermissionError(f"symbolic link artifact는 허용하지 않음: {path}")
+    if not stat.S_ISREG(file_stat.st_mode):
         raise ValueError(f"artifact가 일반 파일이 아님: {path}")
-    if require_secure_permissions and file_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise PermissionError(f"artifact가 group/other 쓰기 가능: {path}")
+    if require_secure_permissions:
+        _require_root_owned(path, file_stat)
 
 
 def load_artifacts(
     artifact_dir: str, *, require_secure_permissions: bool = False
 ) -> LoadedArtifacts:
     """고정된 세 artifact를 검증하고 CPU 추론 상태로 읽는다."""
-    directory = Path(artifact_dir).resolve(strict=True)
+    configured_directory = Path(os.path.abspath(artifact_dir))
+    if require_secure_permissions:
+        _require_secure_directory_tree(configured_directory)
+    directory = configured_directory.resolve(strict=True)
     if not directory.is_dir():
         raise ValueError(f"artifact 경로가 디렉터리가 아님: {directory}")
 
-    model_path = (directory / "autoencoder.pt").resolve(strict=True)
-    scaler_path = (directory / "scaler.npz").resolve(strict=True)
-    metadata_path = (directory / "metadata.json").resolve(strict=True)
+    model_path = directory / "autoencoder.pt"
+    scaler_path = directory / "scaler.npz"
+    metadata_path = directory / "metadata.json"
     for path in (model_path, scaler_path, metadata_path):
         _require_regular_file(path, require_secure_permissions)
 

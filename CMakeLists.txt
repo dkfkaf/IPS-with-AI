@@ -16,6 +16,18 @@ find_path(CPPZMQ_INCLUDE_DIR zmq.hpp)
 if(NOT CPPZMQ_INCLUDE_DIR)
     message(FATAL_ERROR "cppzmq header zmq.hpp not found (Ubuntu: sudo apt install cppzmq-dev)")
 endif()
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${CPPZMQ_INCLUDE_DIR} ${ZMQ_INCLUDE_DIRS})
+check_cxx_source_compiles("#include <zmq.hpp>
+#if !defined(CPPZMQ_VERSION) || CPPZMQ_VERSION < ZMQ_MAKE_VERSION(4, 7, 0)
+#error cppzmq 4.7 or newer is required
+#endif
+int main() { return 0; }
+" CPPZMQ_AT_LEAST_4_7)
+unset(CMAKE_REQUIRED_INCLUDES)
+if(NOT CPPZMQ_AT_LEAST_4_7)
+    message(FATAL_ERROR "cppzmq 4.7 or newer is required")
+endif()
 
 # nlohmann/json — 헤더 온리 설정 파서. Ubuntu: sudo apt install nlohmann-json3-dev
 find_package(nlohmann_json REQUIRED)

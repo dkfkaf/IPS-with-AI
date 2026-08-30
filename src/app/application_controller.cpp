@@ -163,7 +163,7 @@ std::string ApplicationController::format_status() const {
            << (supervisor.model_version.empty() ? "-" : supervisor.model_version) << '\n'
            << "가동 시간: " << uptime << "초\n"
            << "Python 재시작: " << supervisor.restart_count << '\n'
-           << "AI 전송/폐기: " << client.submitted << '/' << dropped << '\n'
+           << "AI 큐 등록/즉시 폐기: " << client.submitted << '/' << dropped << '\n'
            << "정상/이상 응답: " << client.normal_responses << '/'
            << client.anomaly_responses << '\n'
            << "Rule 차단: " << capture.rule_blocks << '\n'

@@ -52,7 +52,7 @@ IPv6, `FORWARD` 체인, 라우터·브리지 배치, TLS 복호화, 애플리케
 | 상황 | 센서 동작 | 기록 |
 | --- | --- | --- |
 | AI 시작 중·미기동 | 해당 플로우를 통과(fail-open), 차단 목록 미변경 | `AI_UNAVAILABLE` 빈도 제한 경고 |
-| AI 연결 실패·2초 응답 시간 초과 | 처리 중·입력·결과 큐 폐기, Python 재시작 | timeout·재시작 상태 |
+| AI 연결 실패·전송과 응답 합산 2초 시간 초과 | 처리 중·입력·결과 큐 폐기, Python 재시작 | timeout·재시작 상태 |
 | JSON·버전·특징 수 검증 실패 | 해당 메시지 폐기, 차단 목록 미변경 | `AI_PROTOCOL_ERROR` 오류 |
 | AI 전송 대기열 포화 | 새 AI 분석 요청을 버리고 패킷은 계속 처리 | `AI_QUEUE_FULL` 빈도 제한 경고 |
 | 모델 로드 실패 | `AI_READY` 전 종료, 자동 재시작 후 Rule-only 지속 | Python stderr·재시작 상태 |
@@ -74,10 +74,12 @@ IPv6, `FORWARD` 체인, 라우터·브리지 배치, TLS 복호화, 애플리케
 상한과 안정화 시간을 설정한다. endpoint·schema version·AI 전용 TTL은 설정하지 않는다. Rule과 AI는
 최상위 `block_ttl_seconds`를 공유한다. 형식·범위 검증에 실패하면 시작하지 않는다.
 
-센서는 root GUI 계정에서만 실행한다. Python도 같은 root 권한이므로 `/opt/ips-with-ai/python-packages`
-와 artifact 파일은 root 소유로 두고 group/other 쓰기 권한을 제거한다. 온라인 loader는 artifact 세
-파일이 일반 파일인지, 특징·모델 version과 수치 범위가 맞는지, group/other 쓰기 가능하지 않은지
-검사한 뒤 `weights_only=True`, CPU, eval 모드로 읽는다.
+센서는 root GUI 계정에서만 실행한다. Python도 같은 root 권한이므로 저장소 루트와 `ml/`,
+`/opt/ips-with-ai/python-packages`, artifact 경로는 root 소유로 두고 group/other 쓰기 권한을
+제거한다. 센서는 Python 실행 전에 코드·runtime 경로를 확인하고 최소 환경변수만 넘긴다. 온라인
+loader는 artifact 디렉터리와 고정된 세 파일의 소유권·권한·파일 종류를 확인하며 symbolic link와
+경로 이탈을 거부한다. 이후 특징·모델 version과 수치 범위를 검사하고 `weights_only=True`, CPU,
+eval 모드로 읽는다.
 
 Qt5 UI 범위는 트레이 상태 아이콘, 신규 AI 차단 알림, 최종 AI 오프라인 알림, 읽기 전용 누적 상태,
 종료뿐이다. 원격 관리, 설정 변경, 차단 해제, 이벤트 이력 대시보드는 구현 범위 밖이다.

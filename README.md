@@ -33,7 +33,7 @@ C++ 센서와 Python AI 엔진은 ZeroMQ로 통신하며, 데이터는 JSON으�
 
 ## 빌드 및 실행
 
-> Ubuntu의 **root GUI 계정으로 로그인한 터미널**에서 실행합니다. 프로그램은
+> Ubuntu 22.04 이상의 **root GUI 계정으로 로그인한 터미널**에서 실행합니다. 프로그램은
 > `geteuid() == 0`이 아니면 즉시 종료하며, 일반 사용자용 `sudo ./ips` 실행은 지원 범위가 아닙니다.
 
 ### 의존성 설치
@@ -58,12 +58,20 @@ chmod -R go-w /opt/ips-with-ai
 ### 빌드
 
 저장소 루트에서 실행합니다.
+저장소는 `/root` 또는 `/opt`처럼 상위 디렉터리까지 root만 수정할 수 있는 위치에 둡니다.
 
 ```bash
 cp config.example.json config.json
 cmake -S . -B build
 cmake --build build --target ips -j2
+chown root:root .
+chmod go-w .
+chown -R root:root ml
+chmod -R go-w ml
 ```
+
+빌드는 cppzmq 4.7 이상을 요구합니다. 센서는 root Python이 읽는 저장소 루트·`ml/`·artifact와
+runtime package 경로에서 symbolic link, root 이외 소유자, group/other 쓰기 권한을 거부합니다.
 
 ### 실행
 

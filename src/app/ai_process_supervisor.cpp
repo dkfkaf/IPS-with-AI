@@ -1,12 +1,17 @@
 #include "app/ai_process_supervisor.h"
 
+#include <sys/stat.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <exception>
 #include <utility>
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcessEnvironment>
 #include <QStringList>
 
@@ -18,6 +23,68 @@ namespace {
 int restart_delay_ms(int attempt_index) {
     constexpr int MAX_RESTART_DELAY_MS = 4000;
     return std::min(1000 * (1 << std::min(attempt_index, 2)), MAX_RESTART_DELAY_MS);
+}
+
+bool validate_root_owned_path(const QString& path, bool expect_directory,
+                              std::string* error) {
+    struct stat path_stat {};
+    const QByteArray encoded_path = QFile::encodeName(path);
+    if (lstat(encoded_path.constData(), &path_stat) != 0) {
+        *error = path.toStdString() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (S_ISLNK(path_stat.st_mode)) {
+        *error = "symbolic link 경로는 허용하지 않음: " + path.toStdString();
+        return false;
+    }
+    if ((expect_directory && !S_ISDIR(path_stat.st_mode)) ||
+        (!expect_directory && !S_ISREG(path_stat.st_mode))) {
+        *error = "예상한 파일 형식이 아님: " + path.toStdString();
+        return false;
+    }
+    if (path_stat.st_uid != 0) {
+        *error = "root 소유 경로가 아님: " + path.toStdString();
+        return false;
+    }
+    if ((path_stat.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        *error = "group/other 쓰기 가능 경로: " + path.toStdString();
+        return false;
+    }
+    return true;
+}
+
+bool validate_secure_directory_tree(const QString& path, std::string* error) {
+    QString current = QDir::cleanPath(QDir(path).absolutePath());
+    while (true) {
+        if (!validate_root_owned_path(current, true, error)) {
+            return false;
+        }
+        const QString parent = QFileInfo(current).dir().absolutePath();
+        if (parent == current) {
+            return true;
+        }
+        current = parent;
+    }
+}
+
+bool validate_python_paths(const QString& checkout, std::string* error) {
+    constexpr const char* RUNTIME_DIRECTORY = "/opt/ips-with-ai/python-packages";
+    if (!validate_secure_directory_tree(checkout, error) ||
+        !validate_secure_directory_tree(QDir(checkout).filePath("ml"), error) ||
+        !validate_secure_directory_tree(RUNTIME_DIRECTORY, error)) {
+        return false;
+    }
+    constexpr const char* REQUIRED_MODULES[] = {
+        "ml/__init__.py", "ml/online_server.py", "ml/artifacts.py",
+        "ml/features.py", "ml/model.py",
+    };
+    for (const char* relative_path : REQUIRED_MODULES) {
+        if (!validate_root_owned_path(QDir(checkout).filePath(relative_path), false,
+                                      error)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -43,7 +110,11 @@ AiProcessSupervisor::AiProcessSupervisor(const AiConfig& config,
     process_.setWorkingDirectory(QDir::currentPath());
     process_.setProcessChannelMode(QProcess::SeparateChannels);
 
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment environment;
+    environment.insert("LANG", "C.UTF-8");
+    environment.insert("LC_ALL", "C.UTF-8");
+    environment.insert("PATH", "/usr/bin:/bin");
+    environment.insert("PYTHONDONTWRITEBYTECODE", "1");
     environment.insert("PYTHONNOUSERSITE", "1");
     environment.insert("PYTHONPATH",
                        "/opt/ips-with-ai/python-packages:" + QDir::currentPath());
@@ -110,6 +181,11 @@ void AiProcessSupervisor::start_attempt() {
     set_state(AiState::STARTING,
               restart_attempts_ == 0 ? "AI 프로세스 시작 중"
                                      : "AI 프로세스 재시작 중");
+    std::string path_error;
+    if (!validate_python_paths(process_.workingDirectory(), &path_error)) {
+        handle_failure("안전하지 않은 Python 실행 경로: " + path_error);
+        return;
+    }
     if (!remove_socket()) {
         handle_failure("stale AI socket 제거 실패");
         return;
