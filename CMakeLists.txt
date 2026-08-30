@@ -36,6 +36,7 @@ add_executable(ips
     src/ai/async_ai_client.cpp
     src/ai/flow_features.cpp
     src/ai/logging_flow_consumer.cpp
+    src/app/ai_process_supervisor.cpp
     src/common/five_tuple.cpp
     src/capture/packet_capture.cpp
     src/capture/firewall_queue_guard.cpp
