@@ -5,7 +5,7 @@
 
 ## 1. 목표와 범위
 
-AI는 종료·타임아웃된 플로우를 비동기로 분석한다. 이상으로 판정된 **현재 플로우는 이미 통과했으므로 차단하지 않고** 대시보드와 로그에 탐지 이벤트를 남긴다. 센서는 그 플로우의 출발지 IP를 TTL 차단 목록에 등록해 **이후 플로우의 패킷만 DROP**한다.
+AI는 종료·타임아웃된 플로우를 비동기로 분석한다. 이상으로 판정된 **현재 플로우는 이미 통과했으므로 차단하지 않고** Qt 트레이와 로그에 탐지 이벤트를 남긴다. 센서는 그 플로우의 출발지 IP를 기존 `block_ttl_seconds` 차단 목록에 등록해 **이후 수신 패킷만 DROP**한다.
 
 Rule 기반 탐지는 패킷 경로에서 즉시 DROP한다. AI는 Rule을 자동 생성하거나 기존 Rule을 변경하지 않는다.
 
@@ -35,39 +35,15 @@ IPv6, `FORWARD` 체인, 라우터·브리지 배치, TLS 복호화, 애플리케
 
 ## 3. C++↔Python 이벤트 계약
 
-요청과 응답은 JSON이며, 양쪽은 `schema_version`, `flow_id`, `model_version`이 맞지 않으면 해당 메시지를 거부하고 오류 이벤트를 남긴다.
+요청과 응답은 JSON schema version 1이다. 전체 필드·타입·오류 코드의 단일 기준은
+[`2026-08-28-online-ai-tray-design.md`](../superpowers/specs/2026-08-28-online-ai-tray-design.md)의
+7~9장이다. 구현은 다음 안전 조건을 지킨다.
 
-```json
-{
-  "schema_version": 1,
-  "flow_id": "<sensor-unique-id>",
-  "src_ip": "192.0.2.10",
-  "dst_ip": "198.51.100.20",
-  "protocol": 6,
-  "first_seen_ms": 0,
-  "last_seen_ms": 0,
-  "end_reason": "timeout",
-  "feature_schema_version": 1,
-  "features": [0.0],
-  "model_version": "<artifact-version>"
-}
-```
-
-```json
-{
-  "schema_version": 1,
-  "flow_id": "<request-flow-id>",
-  "model_version": "<artifact-version>",
-  "anomaly": true,
-  "score": 0.0,
-  "threshold": 0.0
-}
-```
-
-- `features`의 개수·순서·정규화 전 단위는 `ml/features.py`와 학습 산출물의 metadata에 따른다.
-- `flow_id`는 센서가 생성하며, 응답을 원 요청과 연결하고 중복 이벤트를 막는다.
-- `score`는 플로우별 복원 오차, `threshold`는 해당 모델의 판정 임계값이다.
-- 센서는 `anomaly=true` 응답에서만 `src_ip`를 `block_ttl_seconds` 동안 등록한다. 이벤트에는 요청의 5-튜플과 응답의 score·threshold·모델 버전을 함께 기록한다.
+- 요청은 C++이 만든 `flow_id`, IPv4 5-튜플, 시작·종료 시각, 종료 이유, 특징 schema와 27개 특징을 담는다.
+- Python은 `AI_READY`에서 알린 `model_version`을 모든 응답에 넣는다.
+- C++은 schema·`flow_id`·`model_version`·필드 타입·유한한 score/threshold가 모두 맞는 성공 응답만 사용한다.
+- 응답에는 차단 IP를 넣지 않는다. 차단 대상은 C++이 보관한 원본 `FlowRecord`의 출발지에서만 가져온다.
+- `ok=false` 요청 오류나 검증 실패는 차단하지 않고 `AI_PROTOCOL_ERROR`로 기록한다.
 
 ## 4. 장애·과부하 정책
 
@@ -75,19 +51,36 @@ IPv6, `FORWARD` 체인, 라우터·브리지 배치, TLS 복호화, 애플리케
 
 | 상황 | 센서 동작 | 기록 |
 | --- | --- | --- |
-| AI 미기동·연결 실패·응답 시간 초과 | 해당 플로우를 통과(fail-open), 차단 목록 미변경 | `AI_UNAVAILABLE` 경고 |
+| AI 시작 중·미기동 | 해당 플로우를 통과(fail-open), 차단 목록 미변경 | `AI_UNAVAILABLE` 빈도 제한 경고 |
+| AI 연결 실패·2초 응답 시간 초과 | 처리 중·입력·결과 큐 폐기, Python 재시작 | timeout·재시작 상태 |
 | JSON·버전·특징 수 검증 실패 | 해당 메시지 폐기, 차단 목록 미변경 | `AI_PROTOCOL_ERROR` 오류 |
 | AI 전송 대기열 포화 | 새 AI 분석 요청을 버리고 패킷은 계속 처리 | `AI_QUEUE_FULL` 빈도 제한 경고 |
-| 모델 로드 실패 | AI 프로세스는 준비 실패 상태, 센서는 Rule 모드로 계속 동작 | `AI_MODEL_ERROR` 오류 |
+| 모델 로드 실패 | `AI_READY` 전 종료, 자동 재시작 후 Rule-only 지속 | Python stderr·재시작 상태 |
 | 센서 재시작 | 메모리 차단 목록과 미처리 AI 요청을 폐기 | 시작·종료 이벤트 |
 
-`AI_QUEUE_FULL`과 연결 실패 경고는 첫 발생 및 일정 간격 요약으로만 남긴다. 센서 프로세스 상태, AI 연결 상태, AI 대기열 길이, NFQUEUE 드롭/ENOBUFS 수를 대시보드 상태 지표로 표시한다.
+입력·결과 큐는 기본 1024건으로 제한한다. 입력 큐가 차면 새 Flow만 버리고, 결과 큐가 차면 AI
+통신 스레드만 기다린다. `AI_QUEUE_FULL`과 `AI_UNAVAILABLE`은 첫 발생과 이후 60초마다 누계를
+요약한다.
+
+센서는 `QProcess`로 `/usr/bin/python3 -m ml.online_server`를 자동 실행한다. endpoint는
+`ipc:///tmp/ips-with-ai-<sensor-pid>.sock`으로 자동 생성해 사용자가 설정하지 않는다. 시작 또는 통신
+실패 시 1·2·4초 뒤 최대 3회 재시작하고, 60초 동안 안정적으로 ONLINE이면 연속 실패 횟수를
+초기화한다. 재시작을 모두 소진하면 노란 트레이와 `AI 오프라인` 알림을 표시하지만 Rule 차단은
+계속한다.
 
 ## 5. 설정·운영 보안
 
-`config.json`에는 AI endpoint, 응답 시간 제한, 대기열 상한, feature/model schema version, AI 차단 TTL을 추가한다. 설정 파일이 존재하지만 형식·범위 검증에 실패하면 센서를 시작하지 않는다. AI 연결 실패는 실행 중 장애이므로 fail-open을 유지한다.
+`config.json`의 `ai` object는 활성화 여부, artifact 경로, 큐 상한, 시작·응답 제한시간, 재시작
+상한과 안정화 시간을 설정한다. endpoint·schema version·AI 전용 TTL은 설정하지 않는다. Rule과 AI는
+최상위 `block_ttl_seconds`를 공유한다. 형식·범위 검증에 실패하면 시작하지 않는다.
 
-센서는 root 권한으로 패킷을 다루므로 파서·JSON 입력을 신뢰하지 않는다. 모델·설정 파일은 관리자만 쓸 수 있는 권한으로 배포하고, 대시보드의 화이트리스트 변경·수동 차단 해제·설정 변경에는 인증과 감사 로그가 필요하다. 이 기능이 구현 전에는 로컬 단일 관리자 데모 전용임을 명시한다.
+센서는 root GUI 계정에서만 실행한다. Python도 같은 root 권한이므로 `/opt/ips-with-ai/python-packages`
+와 artifact 파일은 root 소유로 두고 group/other 쓰기 권한을 제거한다. 온라인 loader는 artifact 세
+파일이 일반 파일인지, 특징·모델 version과 수치 범위가 맞는지, group/other 쓰기 가능하지 않은지
+검사한 뒤 `weights_only=True`, CPU, eval 모드로 읽는다.
+
+Qt5 UI 범위는 트레이 상태 아이콘, 신규 AI 차단 알림, 최종 AI 오프라인 알림, 읽기 전용 누적 상태,
+종료뿐이다. 원격 관리, 설정 변경, 차단 해제, 이벤트 이력 대시보드는 구현 범위 밖이다.
 
 ## 6. 검증과 결과 기록
 

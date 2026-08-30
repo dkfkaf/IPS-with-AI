@@ -1,0 +1,23 @@
+{
+  "queue_num": 0,
+  "block_ttl_seconds": 600,
+  "whitelist": [],
+  "rules": {
+    "window_seconds": 10,
+    "port_scan": {
+      "distinct_port_threshold": 20
+    },
+    "syn_flood": {
+      "syn_threshold": 100
+    }
+  },
+  "ai": {
+    "enabled": true,
+    "artifact_dir": "ml/artifacts",
+    "queue_capacity": 1024,
+    "startup_timeout_ms": 10000,
+    "response_timeout_ms": 2000,
+    "max_restarts": 3,
+    "restart_reset_seconds": 60
+  }
+}
