@@ -34,6 +34,8 @@ find_package(nlohmann_json REQUIRED)
 find_package(Qt5 5.12 REQUIRED COMPONENTS Core Widgets)
 # Google Test — 2단계에서 도입 (coding_style.md 6.3). Ubuntu: sudo apt install libgtest-dev
 find_package(GTest REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Threads REQUIRED)
 
 # 경고 옵션은 모든 타깃에 공통 — 타깃마다 반복하지 않는다
 add_compile_options(-Wall -Wextra)
@@ -72,6 +74,7 @@ target_link_libraries(ips PRIVATE
     nlohmann_json::nlohmann_json
     Qt5::Core
     Qt5::Widgets
+    Threads::Threads
 )
 
 enable_testing()
@@ -85,7 +88,7 @@ add_executable(parser_test
 )
 add_test(NAME parser_test COMMAND parser_test)
 
-# 아래 3종은 GTest. 시간 주입(TimePoint)으로 TTL·창·상한 등 시간 의존 로직을 검증한다.
+# 아래는 GTest. 시간 의존 로직은 가능한 경우 TimePoint를 직접 주입한다.
 add_executable(block_list_test
     tests/block_list_test.cpp
     src/response/block_list.cpp
@@ -118,3 +121,52 @@ add_executable(rule_test
 )
 target_link_libraries(rule_test PRIVATE GTest::gtest_main)
 add_test(NAME rule_test COMMAND rule_test)
+
+add_executable(flow_features_test
+    tests/flow_features_test.cpp
+    src/ai/flow_features.cpp
+)
+target_link_libraries(flow_features_test PRIVATE GTest::gtest_main)
+add_test(NAME flow_features_test COMMAND flow_features_test)
+
+add_executable(ai_protocol_test
+    tests/ai_protocol_test.cpp
+    src/ai/ai_protocol.cpp
+    src/ai/flow_features.cpp
+    src/common/five_tuple.cpp
+)
+target_link_libraries(ai_protocol_test PRIVATE
+    GTest::gtest_main
+    nlohmann_json::nlohmann_json
+)
+add_test(NAME ai_protocol_test COMMAND ai_protocol_test)
+
+add_executable(async_ai_client_test
+    tests/async_ai_client_test.cpp
+    src/ai/async_ai_client.cpp
+    src/ai/ai_protocol.cpp
+    src/ai/flow_features.cpp
+    src/common/five_tuple.cpp
+)
+target_include_directories(async_ai_client_test PRIVATE ${CPPZMQ_INCLUDE_DIR})
+target_link_libraries(async_ai_client_test PRIVATE
+    GTest::gtest_main
+    PkgConfig::GLOG
+    PkgConfig::ZMQ
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+)
+add_test(NAME async_ai_client_test COMMAND async_ai_client_test)
+set_tests_properties(async_ai_client_test PROPERTIES TIMEOUT 20)
+
+add_test(
+    NAME online_ai_python_test
+    COMMAND ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_SOURCE_DIR}/tests -p test_*.py
+)
+set_tests_properties(online_ai_python_test PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ENVIRONMENT
+        "PYTHONPATH=/opt/ips-with-ai/python-packages:${CMAKE_SOURCE_DIR};PYTHONNOUSERSITE=1;PYTHONDONTWRITEBYTECODE=1"
+    TIMEOUT 60
+)

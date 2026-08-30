@@ -73,6 +73,19 @@ chmod -R go-w ml
 빌드는 cppzmq 4.7 이상을 요구합니다. 센서는 root Python이 읽는 저장소 루트·`ml/`·artifact와
 runtime package 경로에서 symbolic link, root 이외 소유자, group/other 쓰기 권한을 거부합니다.
 
+### 자동 테스트
+
+runtime 의존성 설치와 CMake configure가 끝난 Ubuntu 저장소 루트에서 실행합니다.
+
+```bash
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+```
+
+C++ GTest는 설정·플로우·Rule·AI 프로토콜과 비동기 큐를 검증합니다. Python `unittest`는 요청
+검증·이상 판정·artifact 계약을 검증하며, root 전용 권한·symbolic link 검사는 root 실행에서만
+활성화됩니다. NFQUEUE·재시작·Qt 알림은 아래 가상환경 통합 검증 범위입니다.
+
 ### 실행
 
 ```bash
@@ -119,6 +132,7 @@ iptables -S IPS_WITH_AI
 - [x] **3단계 코드** — AI 자동 실행, 이상 알림, 동일 출발지 후속 패킷 차단
 - [x] 오토인코더 학습·온라인 추론 코드
 - [x] Qt5 트레이 상태·알림 UI
+- [x] C++·Python 자동 단위/계약 테스트 코드
 - [ ] 가상환경 공격 시뮬레이션 검증
 
 ## 참고
