@@ -1,41 +1,40 @@
 #include <unistd.h>
 
 #include <csignal>
-#include <memory>
 #include <utility>
+
+#include <QApplication>
+#include <QTimer>
 
 #include <glog/logging.h>
 
-#include "ai/logging_flow_consumer.h"
-#include "capture/packet_capture.h"
+#include "app/application_controller.h"
 #include "config/config.h"
 #include "response/whitelist.h"
 
 namespace {
 
-// 시그널 핸들러에는 인자를 넘길 수 없어 전역 포인터로 종료 대상을 알린다
-PacketCapture* g_capture = nullptr;
+volatile std::sig_atomic_t g_shutdown_requested = 0;
 
-void handle_signal(int /*signum*/) {
-    if (g_capture != nullptr) {
-        g_capture->stop();
-    }
-}
+void handle_signal(int /*signum*/) { g_shutdown_requested = 1; }
 
 }  // namespace
 
-int main(int /*argc*/, char* argv[]) {
+int main(int argc, char* argv[]) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;  // 개발 단계에서는 파일 대신 화면으로 바로 확인
 
     if (geteuid() != 0) {
-        LOG(WARNING) << "root 권한이 아닙니다 — NFQUEUE 열기에 실패할 수 있습니다";
+        LOG(ERROR) << "root 계정에서만 실행할 수 있습니다";
+        google::ShutdownGoogleLogging();
+        return 1;
     }
 
     // 설정 로드: 파일 없음 → 기본값, 깨진 JSON → 시작 중단(fail-fast)
     const auto config = load_config("config.json");
     if (!config.has_value()) {
         LOG(ERROR) << "설정이 깨져 있습니다 — 시작을 중단합니다";
+        google::ShutdownGoogleLogging();
         return 1;
     }
     // 화이트리스트를 시작 시점에 적재·검증한다: 잘못된 IP가 있으면 중단(오타로 인한 무음
@@ -43,25 +42,34 @@ int main(int /*argc*/, char* argv[]) {
     Whitelist whitelist;
     if (!whitelist.load(config->whitelist)) {
         LOG(ERROR) << "화이트리스트 IP 형식 오류 — config.json을 고치고 다시 실행하세요";
+        google::ShutdownGoogleLogging();
         return 1;
     }
 
-    PacketCapture capture(*config, std::move(whitelist),
-                          std::make_unique<LoggingFlowConsumer>());
-    g_capture = &capture;
-
-    // Ctrl+C(SIGINT)·kill(SIGTERM)에서 수신 루프를 정상 종료시켜
-    // NFQUEUE 자원이 close()로 해제되게 한다
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
-    LOG(INFO) << "AI 기반 인라인 IPS — 2단계: 대응형 IPS (포트 스캔·SYN 플러드 차단)";
-    LOG(INFO) << "iptables INPUT·OUTPUT 규칙을 자동 관리합니다 (NFQUEUE "
-              << config->queue_num << ')';
+    QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
+    int exit_code = 1;
+    {
+        ApplicationController controller(*config, std::move(whitelist));
+        if (controller.start()) {
+            QTimer signal_timer;
+            QObject::connect(&signal_timer, &QTimer::timeout, &controller, [&controller] {
+                if (g_shutdown_requested != 0) {
+                    controller.begin_shutdown(0);
+                }
+            });
+            signal_timer.start(200);
 
-    if (!capture.start()) {
-        return 1;
+            LOG(INFO) << "AI 기반 인라인 IPS 시작";
+            LOG(INFO) << "iptables INPUT·OUTPUT 규칙 자동 관리 (NFQUEUE "
+                      << config->queue_num << ')';
+            exit_code = app.exec();
+            controller.begin_shutdown(exit_code);
+        }
     }
-    LOG(INFO) << "정상 종료";
-    return 0;
+    google::ShutdownGoogleLogging();
+    return exit_code;
 }
