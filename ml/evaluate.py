@@ -7,15 +7,10 @@ import os
 
 from ml.artifacts import load_artifacts
 from ml.features import BENIGN_LABEL
-from ml.model import reconstruction_errors
+from ml.model import normalized_reconstruction_errors
 from ml.preprocess import load_dataset, split_benign
 
 ARTIFACTS = os.path.join(os.path.dirname(__file__), "artifacts")
-
-
-def _errors(model, mean, scale, feature_matrix):
-    """정규화(추론도 학습과 같은 기준으로) 후 행별 복원오차."""
-    return reconstruction_errors(model, (feature_matrix - mean) / scale)
 
 
 def run(csv_glob):
@@ -27,7 +22,9 @@ def run(csv_glob):
     # 오탐률: 정상 test 중 임계값을 넘는 비율 (넘으면 정상인데 공격으로 오판 = 오탐)
     false_positive_rate = float(
         (
-            _errors(artifacts.model, artifacts.mean, artifacts.scale, benign_test)
+            normalized_reconstruction_errors(
+                artifacts.model, artifacts.mean, artifacts.scale, benign_test
+            )
             > artifacts.threshold
         ).mean()
     )
@@ -37,7 +34,7 @@ def run(csv_glob):
     attack_mask = labels != BENIGN_LABEL
     attack_feature_matrix = feature_matrix[attack_mask]
     attack_labels = labels[attack_mask]
-    attack_errors = _errors(
+    attack_errors = normalized_reconstruction_errors(
         artifacts.model, artifacts.mean, artifacts.scale, attack_feature_matrix
     )
     detection_rate = float((attack_errors > artifacts.threshold).mean())

@@ -38,19 +38,14 @@ def train_model(train_scaled, epochs=30, batch_size=256, lr=1e-3, seed=42):
     return model
 
 
-def run(csv_glob, epochs=30, percentile=99.0):
-    """CSV 데이터로 모델을 학습하고 추론에 필요한 산출물을 저장한다."""
-    feature_matrix, labels = load_dataset(csv_glob)
-    train, val, _test = split_benign(feature_matrix, labels)
+def _calculate_threshold(model, scaler, validation, percentile):
+    """정상 검증 데이터의 복원오차에서 이상 판정 임계값을 계산한다."""
+    validation_errors = reconstruction_errors(model, scaler.transform(validation))
+    return float(np.percentile(validation_errors, percentile))
 
-    scaler = StandardScaler().fit(train)  # 정규화 기준은 '정상 train'에만 맞춘다 (누수 방지)
-    model = train_model(scaler.transform(train), epochs=epochs)
 
-    # 임계값: 정상 val의 복원오차 분포에서 percentile 지점 (정상의 99%가 이 아래)
-    val_err = reconstruction_errors(model, scaler.transform(val))
-    threshold = float(np.percentile(val_err, percentile))
-    model_version = datetime.now(timezone.utc).strftime("ae-%Y%m%dT%H%M%SZ")
-
+def _save_artifacts(model, scaler, threshold, percentile, model_version):
+    """온라인 추론에 필요한 모델, scaler, 메타데이터를 저장한다."""
     os.makedirs(ARTIFACTS, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(ARTIFACTS, "autoencoder.pt"))
     np.savez(os.path.join(ARTIFACTS, "scaler.npz"), mean=scaler.mean_, scale=scaler.scale_)
@@ -67,6 +62,20 @@ def run(csv_glob, epochs=30, percentile=99.0):
             f,
             indent=2,
         )
+
+
+def run(csv_glob, epochs=30, percentile=99.0):
+    """CSV 데이터로 모델을 학습하고 추론에 필요한 산출물을 저장한다."""
+    feature_matrix, labels = load_dataset(csv_glob)
+    train, val, _test = split_benign(feature_matrix, labels)
+
+    scaler = StandardScaler().fit(train)  # 정규화 기준은 '정상 train'에만 맞춘다 (누수 방지)
+    model = train_model(scaler.transform(train), epochs=epochs)
+
+    threshold = _calculate_threshold(model, scaler, val, percentile)
+    model_version = datetime.now(timezone.utc).strftime("ae-%Y%m%dT%H%M%SZ")
+
+    _save_artifacts(model, scaler, threshold, percentile, model_version)
     print(f"저장 완료 → {ARTIFACTS} (임계값={threshold:.6f})")
     return model, scaler, threshold
 

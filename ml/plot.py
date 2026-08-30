@@ -15,7 +15,7 @@ from sklearn.metrics import roc_auc_score, roc_curve  # noqa: E402
 
 from ml.evaluate import ARTIFACTS, load_artifacts  # noqa: E402
 from ml.features import BENIGN_LABEL  # noqa: E402
-from ml.model import reconstruction_errors  # noqa: E402
+from ml.model import normalized_reconstruction_errors  # noqa: E402
 from ml.preprocess import load_dataset, split_benign  # noqa: E402
 
 # 한글 라벨이 깨지지 않게 Windows 기본 한글 폰트 사용
@@ -23,11 +23,6 @@ matplotlib.rcParams["font.family"] = "Malgun Gothic"
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 PLOTS = os.path.join(ARTIFACTS, "plots")
-
-
-def _errors(model, mean, scale, feature_matrix):
-    """추론도 학습과 같은 기준으로 정규화 후 복원오차."""
-    return reconstruction_errors(model, (feature_matrix - mean) / scale)
 
 
 def _plot_error_distribution(benign_err, attack_err, threshold, path):
@@ -100,8 +95,10 @@ def run(csv_glob):
     feature_matrix, labels = load_dataset(csv_glob)
     _train, _val, benign_test = split_benign(feature_matrix, labels)
     attack_mask = labels != BENIGN_LABEL
-    attack_errors = _errors(model, mean, scale, feature_matrix[attack_mask])
-    benign_errors = _errors(model, mean, scale, benign_test)
+    attack_errors = normalized_reconstruction_errors(
+        model, mean, scale, feature_matrix[attack_mask]
+    )
+    benign_errors = normalized_reconstruction_errors(model, mean, scale, benign_test)
 
     os.makedirs(PLOTS, exist_ok=True)
     _plot_error_distribution(

@@ -36,3 +36,9 @@ def reconstruction_errors(model, feature_matrix):
         reconstructed = model(input_tensor)
         errors = ((reconstructed - input_tensor) ** 2).mean(dim=1)
     return errors.numpy()
+
+
+def normalized_reconstruction_errors(model, mean, scale, feature_matrix):
+    """학습 scaler 기준으로 정규화한 뒤 행별 복원오차를 반환한다."""
+    normalized_features = (feature_matrix - mean) / scale
+    return reconstruction_errors(model, normalized_features)
