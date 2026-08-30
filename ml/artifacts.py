@@ -52,10 +52,10 @@ def _require_regular_file(path: Path, require_secure_permissions: bool) -> None:
         _require_root_owned(path, file_stat)
 
 
-def load_artifacts(
-    artifact_dir: str, *, require_secure_permissions: bool = False
-) -> LoadedArtifacts:
-    """고정된 세 artifact를 검증하고 CPU 추론 상태로 읽는다."""
+def _resolve_artifact_paths(
+    artifact_dir: str, require_secure_permissions: bool
+) -> tuple[Path, Path, Path]:
+    """artifact 디렉터리와 고정 파일 세 개의 경로·권한을 검증한다."""
     configured_directory = Path(os.path.abspath(artifact_dir))
     if require_secure_permissions:
         _require_secure_directory_tree(configured_directory)
@@ -68,7 +68,11 @@ def load_artifacts(
     metadata_path = directory / "metadata.json"
     for path in (model_path, scaler_path, metadata_path):
         _require_regular_file(path, require_secure_permissions)
+    return model_path, scaler_path, metadata_path
 
+
+def _load_metadata(metadata_path: Path) -> tuple[float, str]:
+    """특징 계약과 판정 임계값을 metadata에서 읽어 검증한다."""
     with metadata_path.open(encoding="utf-8") as file:
         metadata = json.load(file)
     if not isinstance(metadata, dict):
@@ -90,7 +94,11 @@ def load_artifacts(
         raise ValueError("metadata 임계값 오류") from error
     if not np.isfinite(threshold) or threshold < 0:
         raise ValueError("metadata 임계값 오류")
+    return threshold, model_version
 
+
+def _load_scaler(scaler_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """정규화 배열을 읽고 특징 개수·유한성·scale 범위를 검증한다."""
     with np.load(scaler_path, allow_pickle=False) as scaler:
         try:
             mean = np.asarray(scaler["mean"], dtype=np.float64)
@@ -104,11 +112,28 @@ def load_artifacts(
         raise ValueError("scaler에 유한하지 않은 값이 있음")
     if not np.all(scale > 0):
         raise ValueError("scaler scale은 0보다 커야 함")
+    return mean, scale
 
+
+def _load_model(model_path: Path) -> Autoencoder:
+    """가중치를 CPU 모델에 읽고 추론 모드로 전환한다."""
     model = Autoencoder(len(FEATURES))
     state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
+    return model
+
+
+def load_artifacts(
+    artifact_dir: str, *, require_secure_permissions: bool = False
+) -> LoadedArtifacts:
+    """고정된 세 artifact를 검증하고 CPU 추론 상태로 읽는다."""
+    model_path, scaler_path, metadata_path = _resolve_artifact_paths(
+        artifact_dir, require_secure_permissions
+    )
+    threshold, model_version = _load_metadata(metadata_path)
+    mean, scale = _load_scaler(scaler_path)
+    model = _load_model(model_path)
     return LoadedArtifacts(
         model=model,
         mean=mean,
