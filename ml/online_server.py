@@ -130,7 +130,7 @@ def _error_response(
         "flow_id": flow_id if isinstance(flow_id, str) else "",
         "model_version": artifacts.model_version,
         "ok": False,
-        "error": {"code": error.code, "message": str(error)},
+        "error_code": error.code,
     }
 
 

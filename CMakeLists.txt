@@ -32,6 +32,7 @@ include_directories(src)
 # --- 센서 본체 ---
 add_executable(ips
     src/main.cpp
+    src/ai/ai_protocol.cpp
     src/ai/flow_features.cpp
     src/ai/logging_flow_consumer.cpp
     src/common/five_tuple.cpp
