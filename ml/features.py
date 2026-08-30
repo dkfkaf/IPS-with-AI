@@ -5,6 +5,8 @@
 """
 
 # C++ 센서의 방향별 통계(flow_features.md)에서 뽑을 수 있는 것만 골랐다.
+FEATURE_SCHEMA_VERSION = 1
+
 FEATURES = [
     "Flow Duration",
     "Total Fwd Packets",

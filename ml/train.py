@@ -3,13 +3,14 @@
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import StandardScaler
 
-from ml.features import FEATURES
+from ml.features import FEATURES, FEATURE_SCHEMA_VERSION
 from ml.model import Autoencoder, reconstruction_errors
 from ml.preprocess import load_dataset, split_benign
 
@@ -48,6 +49,7 @@ def run(csv_glob, epochs=30, percentile=99.0):
     # 임계값: 정상 val의 복원오차 분포에서 percentile 지점 (정상의 99%가 이 아래)
     val_err = reconstruction_errors(model, scaler.transform(val))
     threshold = float(np.percentile(val_err, percentile))
+    model_version = datetime.now(timezone.utc).strftime("ae-%Y%m%dT%H%M%SZ")
 
     os.makedirs(ARTIFACTS, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(ARTIFACTS, "autoencoder.pt"))
@@ -55,6 +57,8 @@ def run(csv_glob, epochs=30, percentile=99.0):
     with open(os.path.join(ARTIFACTS, "metadata.json"), "w") as f:
         json.dump(
             {
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
+                "model_version": model_version,
                 "threshold": threshold,
                 "features": FEATURES,
                 "n_features": len(FEATURES),
