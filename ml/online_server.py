@@ -54,17 +54,18 @@ def _require_ipv4(request: dict, key: str) -> None:
         raise RequestError(INVALID_FIELD, f"{key} IPv4 오류")
 
 
-def _validate_request(
-    request: object, artifacts: LoadedArtifacts
-) -> tuple[str, np.ndarray]:
-    if not isinstance(request, dict):
-        raise RequestError(INVALID_FIELD, "요청이 JSON object가 아님")
+def _require_flow_id(request: dict) -> str:
+    """요청과 응답을 연결할 비어 있지 않은 Flow ID를 반환한다."""
     flow_id = request.get("flow_id")
     if not isinstance(flow_id, str) or not flow_id:
         raise RequestError(INVALID_FIELD, "flow_id 오류")
-    if request.get("schema_version") != 1 or isinstance(
-        request.get("schema_version"), bool
-    ):
+    return flow_id
+
+
+def _require_schema_versions(request: dict, artifacts: LoadedArtifacts) -> None:
+    """전송 계약과 모델 특징 계약의 버전이 정확히 일치하는지 확인한다."""
+    schema_version = request.get("schema_version")
+    if schema_version != 1 or isinstance(schema_version, bool):
         raise RequestError(SCHEMA_MISMATCH, "schema_version 오류")
     feature_schema_version = request.get("feature_schema_version")
     if feature_schema_version != artifacts.feature_schema_version or isinstance(
@@ -74,6 +75,9 @@ def _validate_request(
             FEATURE_SCHEMA_MISMATCH, "feature_schema_version 오류"
         )
 
+
+def _require_flow_metadata(request: dict) -> None:
+    """5-튜플, 관찰 시각, 종료 사유의 타입과 범위를 확인한다."""
     _require_ipv4(request, "src_ip")
     _require_ipv4(request, "dst_ip")
     _require_integer(request, "src_port", 0, 65535)
@@ -86,6 +90,9 @@ def _validate_request(
     if request.get("end_reason") not in {"tcp_fin", "tcp_reset", "timeout"}:
         raise RequestError(INVALID_FIELD, "end_reason 오류")
 
+
+def _require_features(request: dict) -> np.ndarray:
+    """특징 배열의 개수·수치 타입·유한성을 확인해 float64 배열로 반환한다."""
     feature_values = request.get("features")
     if not isinstance(feature_values, list) or len(feature_values) != len(FEATURES):
         raise RequestError(FEATURE_COUNT_MISMATCH, "특징 개수 오류")
@@ -100,7 +107,18 @@ def _validate_request(
         raise RequestError(NONFINITE_FEATURE, "특징 숫자 범위 오류") from error
     if not np.isfinite(features).all():
         raise RequestError(NONFINITE_FEATURE, "특징에 NaN 또는 Inf 포함")
-    return flow_id, features
+    return features
+
+
+def _validate_request(
+    request: object, artifacts: LoadedArtifacts
+) -> tuple[str, np.ndarray]:
+    if not isinstance(request, dict):
+        raise RequestError(INVALID_FIELD, "요청이 JSON object가 아님")
+    flow_id = _require_flow_id(request)
+    _require_schema_versions(request, artifacts)
+    _require_flow_metadata(request)
+    return flow_id, _require_features(request)
 
 
 def infer_request(artifacts: LoadedArtifacts, request: object) -> dict[str, object]:
@@ -141,6 +159,43 @@ def _stop(_signum, _frame) -> None:
     _running = False
 
 
+def _response_for_payload(
+    artifacts: LoadedArtifacts, payload: bytes
+) -> dict[str, object] | None:
+    """수신 bytes를 정상 응답 또는 계약 오류 응답으로 변환한다."""
+    request = None
+    try:
+        request = json.loads(payload.decode("utf-8", errors="strict"))
+        return infer_request(artifacts, request)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return _error_response(
+            artifacts, request, RequestError(INVALID_JSON, str(error))
+        )
+    except RequestError as error:
+        return _error_response(artifacts, request, error)
+    except Exception as error:
+        print(f"AI 추론 실패: {error}", file=sys.stderr, flush=True)
+        return None
+
+
+def _serve_requests(socket: zmq.Socket, artifacts: LoadedArtifacts) -> int:
+    """종료 신호까지 REP 요청을 한 건씩 처리한다."""
+    while _running:
+        try:
+            payload = socket.recv()
+        except zmq.Again:
+            continue
+        response = _response_for_payload(artifacts, payload)
+        if response is None:
+            return 1
+        try:
+            socket.send_json(response)
+        except zmq.ZMQError as error:
+            print(f"AI 응답 전송 실패: {error}", file=sys.stderr, flush=True)
+            return 1
+    return 0
+
+
 def run(endpoint: str, artifact_dir: str) -> int:
     global _running
     _running = True
@@ -165,33 +220,10 @@ def run(endpoint: str, artifact_dir: str) -> int:
     )
 
     try:
-        while _running:
-            try:
-                payload = socket.recv()
-            except zmq.Again:
-                continue
-            request = None
-            try:
-                request = json.loads(payload.decode("utf-8", errors="strict"))
-                response = infer_request(artifacts, request)
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                response = _error_response(
-                    artifacts, request, RequestError(INVALID_JSON, str(error))
-                )
-            except RequestError as error:
-                response = _error_response(artifacts, request, error)
-            except Exception as error:
-                print(f"AI 추론 실패: {error}", file=sys.stderr, flush=True)
-                return 1
-            try:
-                socket.send_json(response)
-            except zmq.ZMQError as error:
-                print(f"AI 응답 전송 실패: {error}", file=sys.stderr, flush=True)
-                return 1
+        return _serve_requests(socket, artifacts)
     finally:
         socket.close(linger=0)
         context.term()
-    return 0
 
 
 def main() -> int:
