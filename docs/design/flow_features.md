@@ -1,7 +1,7 @@
 # IPS 설계 — 플로우 특징 토대 (AI 연동 준비)
 
 > AI 기반 인라인 IPS · C++ 센서
-> 대상 범위: 3번 "C++ 센서 보강" 중 **토대** — 양방향 플로우 병합 + 특징 원재료 누적
+> 대상 범위: 3번 "C++ 센서 보강" — 양방향 플로우 + 27개 특징 + FlowConsumer
 > 선행 문서: `overview.md`(개념), `stage2.md`(2단계), `code_explained.md`(코드 원리)
 
 ---
@@ -11,17 +11,15 @@
 3단계에서 AI(오토인코더)에 넘길 플로우 특징을 계산하려면, 그 특징의 **원재료**를 패킷마다
 플로우에 쌓아둬야 한다. 이 문서는 그 토대만 다룬다.
 
-- **한다**: 양방향 플로우 병합, 방향별 특징 원재료 누적(패킷 크기·간격·플래그 통계), 플로우 조회 통로.
-- **안 한다**: 정확한 특징 벡터 확정·정규화, 어떤 플로우를 AI로 보낼지 선별, ZeroMQ·JSON 전송,
-  AI→룰 피드백. 이건 AI 엔진을 설계할 때 함께 정한다.
+- **한다**: 양방향 플로우 병합, CICFlowMeter 호환 원재료 누적, 27개 특징 변환,
+  종료 Flow 방출, FlowConsumer 배선.
+- **안 한다**: 정규화, ZeroMQ·JSON 전송, AI 이상 이벤트·후속 플로우 차단 배선.
 
 > **왜 지금 하나**: 이 누적은 **패킷 경로에 심어야** 한다. 나중에 붙이면 패킷마다 도는 코드를
 > 다시 건드려야 하므로, 토대를 먼저 깔아둔다. 지금 소비자는 테스트뿐이지만(누적이 맞는지 검증),
 > AI 단계에서 특징을 고를 때 패킷 경로를 다시 안 건드리게 하는 게 목적이다.
 
-> **왜 특징 목록을 지금 안 정하나**: C++가 뽑는 특징 = AI가 먹는 입력이다. AI 모델(CICIDS2017
-> 학습)이 어떤 특징을 쓸지 정해지기 전에 목록을 고정하면 헛일이 된다. 대신 **어떤 특징이든
-> 파생되는 원재료**(합·제곱합·최소·최대·플래그 카운트)를 쌓아, 목록 확정을 AI 단계로 미룬다.
+> 특징 목록은 `ml/features.py`의 27개 순서로 확정했다. C++와 Python이 같은 순서를 공유한다.
 
 ---
 
@@ -29,7 +27,7 @@
 
 | 결정 | 내용 | 근거 |
 | --- | --- | --- |
-| 특징 세트 | 지금은 **토대만** — 원재료 누적까지 | 목록은 AI 모델이 정함. 결합을 피함 |
+| 특징 세트 | `ml/features.py`의 27개 | C++·Python 입력 순서를 고정 |
 | 통계 범위 | 방향별 패킷 크기·간격 통계 + 플래그 카운트 + 지속시간 | 평균·표준편차는 합·제곱합·개수만 쌓으면 나오는 싼 원재료. 특징 고정이 아님 |
 | 플로우 방향 | **양방향 병합** (fwd/bwd 구분) | AI 특징은 요청·응답을 합쳐 봐야 의미 있음 |
 | 파서 | `bool tcp_syn` → `uint8_t tcp_flags` | 플래그를 세려면 SYN만이 아니라 플래그 전체가 필요 |
@@ -39,7 +37,11 @@
 
 ## 3. 양방향 플로우 병합
 
-지금은 A→B와 B→A가 별개 플로우다(2단계 5.2의 단방향 단순화). 이걸 하나로 합친다.
+기존에는 A→B와 B→A가 별개 플로우였다. 현재는 하나의 양방향 플로우로 합친다.
+
+> **운영 방식**: 프로그램이 같은 NFQUEUE에 `INPUT`과 `OUTPUT`을 자동 등록한다. Rule·Whitelist·
+> BlockList DROP 판정은 inbound에만 적용하고, outbound는 원격 시작 Flow의 backward 통계를
+> 보충한 뒤 항상 ACCEPT한다. 로컬 시작 Flow도 응답 구분을 위해 추적하지만 AI에는 보내지 않는다.
 
 **키 잡는 법 — 새 키 타입 없이**: 패킷이 오면 정방향 5-튜플로 찾고, 없으면 **뒤집은** 5-튜플로
 찾는다. 둘 다 없으면 새 플로우이고, 이 패킷이 **정방향**(플로우를 연 쪽)이 된다.
@@ -88,8 +90,9 @@ struct RunningStats {
     double mean() const { return count ? sum / count : 0.0; }
     double stddev() const {
         if (count == 0) return 0.0;
-        const double m = mean();
-        const double var = sq_sum / count - m * m;   // 모분산
+        if (count < 2) return 0.0;
+        const double n = static_cast<double>(count);
+        const double var = (sq_sum - sum * sum / n) / (n - 1.0);  // 표본분산
         return var > 0.0 ? std::sqrt(var) : 0.0;      // 부동소수 오차로 음수면 0
     }
 };
@@ -102,14 +105,15 @@ struct RunningStats {
 
 ```cpp
 struct DirectionStats {
-    RunningStats packet_len;   // count=패킷수, sum=바이트수, mean/stddev/min/max
+    RunningStats packet_len;   // IP 전체 길이 통계 — 기존 검증 호환용
+    RunningStats payload_len;  // CICFlowMeter의 TCP/UDP payload 길이 통계
     RunningStats iat_us;       // 같은 방향 연속 패킷 간격(마이크로초)
     TimePoint last_seen{};     // IAT 계산용 (packet_len.count==0이면 아직 없음)
     uint32_t syn = 0, ack = 0, fin = 0, rst = 0, psh = 0, urg = 0;  // 플래그별 카운트
 };
 ```
 
-- 패킷 수·바이트 수는 `packet_len.count`·`packet_len.sum`에서 나오므로 따로 두지 않는다.
+- AI 패킷 수·바이트 수는 `payload_len.count`·`payload_len.sum`에서 나온다.
 - IAT는 같은 방향에서 **직전 패킷과의 간격**이다. 첫 패킷은 간격이 없으므로 두 번째부터 쌓인다.
 
 ### 4.3 Flow — 양방향으로 교체
@@ -136,6 +140,7 @@ struct Flow {
 struct ParsedPacket {
     FiveTuple tuple;
     uint16_t total_len;
+    uint16_t payload_len; // TCP/UDP 전송계층 payload 길이
     bool has_ports;
     uint8_t tcp_flags;   // (변경) bool tcp_syn 대신 TCP 플래그 옥텟. has_ports=false·UDP면 0
 };
@@ -164,7 +169,8 @@ DirectionStats& dir = is_forward ? flow.forward : flow.backward;
 if (dir.packet_len.count > 0) {                       // 직전 패킷이 있었으면
     dir.iat_us.add(마이크로초(now - dir.last_seen));   // 간격 먼저 쌓고
 }
-dir.packet_len.add(packet.total_len);                 // 그 다음 크기 누적
+dir.packet_len.add(packet.total_len);                 // 기존 전체 길이 통계
+dir.payload_len.add(packet.payload_len);              // AI 특징용 payload 통계
 dir.last_seen = now;
 if (packet.tcp_flags & TH_SYN)  ++dir.syn;            // 플래그 카운트
 if (packet.tcp_flags & TH_ACK)  ++dir.ack;
@@ -182,7 +188,7 @@ flow.last_seen = now;
 const Flow* get_flow(const FiveTuple& key) const;
 ```
 
-지금 소비자는 테스트다(누적이 맞는지 검증). AI 단계에서 특징 벡터를 뽑을 때 이 통로로 읽는다.
+조회 통로는 진단과 검증에 사용한다. AI 방출은 종료·만료 추출 API를 사용한다.
 
 ---
 
@@ -204,11 +210,9 @@ const Flow* get_flow(const FiveTuple& key) const;
 
 ## 8. 이 단계에서 미루는 것 (AI 엔진 설계와 함께)
 
-- 정확한 특징 벡터 정의(어느 원재료를 어떤 파생값으로) + 정규화
-- "애매한 플로우" 선별 — 어떤 플로우를 언제 AI로 보낼지
+- 정규화와 모델 산출물 적용
 - ZeroMQ 전송(cppzmq) + JSON 직렬화(nlohmann)
-- AI가 돌려준 판정을 룰로 등록하는 피드백 경로
-- 플로우 종료(FIN/RST) 시점의 특징 확정 — 지금은 누적만, 종료 판정은 AI 단계
+- AI가 돌려준 이상 판정을 대시보드 이벤트와 출발지 IP TTL 차단으로 연결하는 경로
 
 ---
 
@@ -229,22 +233,27 @@ const Flow* get_flow(const FiveTuple& key) const;
 
 ---
 
-## 다음 작업 (TODO) — AI-feed 레이어 (ZeroMQ 전까지)
+## 구현 완료 — AI-feed 레이어 (ZeroMQ 전까지)
 
-2026-07-23 브레인스토밍에서 합의한 범위·설계. 구현은 미룸(오늘 안 함). AI 특징 세트(ml/features.py 27개)가
-확정됐으므로 이제 만들 수 있다. **ZeroMQ 전송·JSON·AI→룰 피드백은 이 다음 단계(제외).**
+2026-08-27 기준으로 27개 특징 추출과 FlowConsumer 배선을 구현했다.
+**ZeroMQ 전송·AI 이상 이벤트와 후속 플로우 차단 배선은 다음 단계다.**
 
-- **① 특징 벡터 추출**: `flow_to_features(const Flow&) → double[27]`. forward/backward `DirectionStats`에서
-  뽑아 `ml/features.py`와 **동일 순서**로. 순서를 한 곳에 고정하고 features.py를 주석 참조.
-  skew(CICFlowMeter와 계산 차이, 예: 패킷 길이 정의)는 주석으로 명시 — 검증은 B(추론) 단계.
-- **② 방출 시점**: 플로우가 **타임아웃으로 정리될 때** 방출. `FlowManager::cleanup_expired`가 지워지는
-  플로우들을 반환하도록 변경 → `PacketCapture`가 처리. (FIN/RST 조기 방출은 지연 최적화, 나중.)
-- **③ 선별**: 화이트리스트·차단된 출발지는 스킵, 나머지 완성 플로우만 AI 후보.
-- **④ 구멍(인터페이스)**: 추상 `FeatureConsumer`(`consume(vector)`). 오늘의 stub = `LoggingConsumer`(로그로
-  증명). 나중에 ZeroMQ 구현을 이 인터페이스에 끼움(기존 코드 불변).
-- **⑤ 파일 배치(제안)**: 새 `src/ai/`(`feature_vector`, `feature_consumer`, `logging_consumer`) +
-  `flow_manager`(cleanup 반환)·`packet_capture`(배선) 수정. *미확정: 폴더명 `ai/` vs `detect/`, 방출 방식.*
+- **① 특징 벡터 추출**: `flow_to_features(const Flow&) → double[27]`. `ml/features.py`와
+  동일 순서이며 packet length는 CICFlowMeter처럼 TCP/UDP payload 길이, 시간은 μs,
+  표준편차는 표본 표준편차를 사용한다.
+- **② 방출 시점**: TCP RST 또는 양방향 FIN 뒤 마지막 ACK에서 방출하고, 나머지는 타임아웃 시 방출한다.
+  `FlowManager::cleanup_expired`가 만료 플로우를 반환하며 `PacketCapture`가 처리한다.
+- **③ 선별**: 화이트리스트·차단된 출발지·1패킷 Flow는 스킵한다. Rule 적중 시 해당
+  출발지가 시작한 활성 Flow도 모두 제거해 TTL 이후 AI 후보로 다시 나타나지 않게 한다.
+- **④ 인터페이스**: `FlowConsumer::consume(FlowRecord)`는 즉시 반환하며 거부 시 false다.
+  `FlowRecord`에는 flow ID·5-튜플·시각·종료 사유·schema version·27개 특징이 들어간다.
+  현재 구현은 `LoggingFlowConsumer`, 다음 구현은 비동기 ZeroMQ 큐다.
+- **⑤ 파일 배치**: `src/ai/`에 특징 계약·Consumer를 두고, `flow_manager`와
+  `packet_capture`가 Flow 종료·방출을 담당한다.
+- **⑥ 호스트 양방향 캡처**: NFQUEUE hook으로 INPUT·OUTPUT을 구분한다. 원격 시작 Flow만
+  Consumer에 전달하고, 로컬 시작 Flow는 inbound 응답을 신규 공격 Flow로 오인하지 않도록
+  통계 수집 후 폐기한다.
 
 ---
 
-*본 문서는 플로우 특징 토대 설계다. 특징 벡터·전송·피드백은 AI 엔진 설계 문서에서 다룬다.*
+*특징 벡터와 Consumer 토대까지 구현했다. 전송·피드백은 AI 엔진 설계 문서에서 다룬다.*

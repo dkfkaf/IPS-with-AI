@@ -25,8 +25,11 @@ include_directories(src)
 # --- 센서 본체 ---
 add_executable(ips
     src/main.cpp
+    src/ai/flow_features.cpp
+    src/ai/logging_flow_consumer.cpp
     src/common/five_tuple.cpp
     src/capture/packet_capture.cpp
+    src/capture/firewall_queue_guard.cpp
     src/capture/packet_source.cpp
     src/capture/packet_parser.cpp
     src/flow/flow_manager.cpp

@@ -455,11 +455,9 @@ tests/                             # 테스트는 평평하게 두되 include는
 격리 VM 환경(공격: Kali, 방어: IPS)에서 수행한다. overview.md 7장의 계획을 2단계
 범위로 구체화한 것이다.
 
-> **배치 전제**: NFQUEUE는 1단계와 동일하게 **INPUT 체인**에 건다
-> (`iptables -I INPUT -j NFQUEUE --queue-num 0 --queue-bypass`, 1단계 main 안내 로그).
-> 방어 호스트 자신을 보호하는 구성이므로 유입 트래픽 기준으로 통계가 쌓인다 — SourceStats
-> 갱신 규칙(5.2절)이 이 전제 위에서 성립한다. FORWARD 체인(경유 트래픽 보호)은 이 단계
-> 범위 밖이다.
+> **배치 전제**: 프로그램이 전용 체인을 통해 INPUT·OUTPUT을 같은 NFQUEUE에 자동 등록한다.
+> Rule·SourceStats·차단은 inbound에만 적용하고, outbound는 양방향 Flow 통계만 보충한다.
+> 방어 호스트 자신을 보호하는 구성이며 FORWARD 체인(경유 트래픽 보호)은 범위 밖이다.
 
 | # | 시나리오 | 확인 사항 |
 | --- | --- | --- |

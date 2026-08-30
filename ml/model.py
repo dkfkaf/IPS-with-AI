@@ -23,15 +23,16 @@ class Autoencoder(nn.Module):
         )
 
     def forward(self, x):
+        """입력 특징을 병목 표현으로 압축한 뒤 원래 차원으로 복원한다."""
         return self.decoder(self.encoder(x))
 
 
-def reconstruction_errors(model, X):
+def reconstruction_errors(model, feature_matrix):
     """각 행의 복원 오차(MSE = 입력과 출력 차이의 제곱 평균)를 numpy 배열로 돌려준다.
     이 값이 크면 '정상과 다르다'는 뜻."""
     model.eval()
     with torch.no_grad():
-        t = torch.tensor(X, dtype=torch.float32)
-        out = model(t)
-        err = ((out - t) ** 2).mean(dim=1)  # 행(플로우)별 평균제곱오차
-    return err.numpy()
+        input_tensor = torch.tensor(feature_matrix, dtype=torch.float32)
+        reconstructed = model(input_tensor)
+        errors = ((reconstructed - input_tensor) ** 2).mean(dim=1)
+    return errors.numpy()

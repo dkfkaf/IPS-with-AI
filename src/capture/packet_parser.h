@@ -13,6 +13,7 @@
 struct ParsedPacket {
     FiveTuple tuple;      // has_ports=false면 src_port/dst_port는 0
     uint16_t total_len;   // IP 전체 길이 (ntohs로 호스트 순서 변환 후 저장)
+    uint16_t payload_len; // CICFlowMeter 특징과 맞춘 TCP/UDP payload 길이
     bool has_ports;       // 전송 계층(TCP/UDP) 파싱 성공 여부
     uint8_t tcp_flags;    // TCP 플래그 옥텟 (has_ports=false거나 UDP면 0). TH_SYN 등으로 검사
 };

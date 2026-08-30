@@ -30,19 +30,25 @@ struct RunningStats {
     }
     double mean() const { return count ? sum / static_cast<double>(count) : 0.0; }
     double stddev() const {
-        if (count == 0) return 0.0;
-        const double m = mean();
-        const double var = sq_sum / static_cast<double>(count) - m * m;  // 모분산
+        if (count < 2) return 0.0;
+        const double n = static_cast<double>(count);
+        const double var = (sq_sum - sum * sum / n) / (n - 1.0);  // CICFlowMeter 표본분산
         return var > 0.0 ? std::sqrt(var) : 0.0;  // 부동소수 오차로 음수면 0
     }
 };
 
 // 플로우 한 방향의 특징 원재료.
 struct DirectionStats {
-    RunningStats packet_len;  // count=패킷수, sum=바이트수, mean/stddev/min/max
+    RunningStats packet_len;  // IP 전체 길이 통계 — 기존 Rule·검증 호환용
+    RunningStats payload_len; // CICFlowMeter의 TCP/UDP payload 길이 통계
     RunningStats iat_us;      // 같은 방향 연속 패킷 간격 (마이크로초)
     TimePoint last_seen{};    // IAT 계산용 (packet_len.count==0이면 아직 패킷 없음)
     uint32_t syn = 0, ack = 0, fin = 0, rst = 0, psh = 0, urg = 0;  // TCP 플래그별 카운트
+};
+
+enum class FlowOrigin {
+    REMOTE_INITIATED,
+    LOCAL_INITIATED,
 };
 
 // 플로우 1개 = 양방향 대화. key는 정방향(초기자) 5-튜플이자 맵 키.
@@ -52,6 +58,19 @@ struct Flow {
     TimePoint last_seen;      // 지속시간 = last_seen - first_seen
     DirectionStats forward;   // key 방향 (플로우를 연 쪽)
     DirectionStats backward;  // 반대 방향
+    FlowOrigin origin = FlowOrigin::REMOTE_INITIATED;
+    bool fin_handshake_complete = false;
+};
+
+enum class FlowEndReason {
+    TCP_FIN,
+    TCP_RESET,
+    TIMEOUT,
+};
+
+struct EndedFlow {
+    Flow flow;
+    FlowEndReason reason;
 };
 
 // 출발지 IP 1개의 교차-플로우 통계 (고정 창). 포트 스캔·SYN 플러드 판정의 입력.

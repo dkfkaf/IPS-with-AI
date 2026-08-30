@@ -38,8 +38,9 @@ def train_model(train_scaled, epochs=30, batch_size=256, lr=1e-3, seed=42):
 
 
 def run(csv_glob, epochs=30, percentile=99.0):
-    X, labels = load_dataset(csv_glob)
-    train, val, _test = split_benign(X, labels)
+    """CSV 데이터로 모델을 학습하고 추론에 필요한 산출물을 저장한다."""
+    feature_matrix, labels = load_dataset(csv_glob)
+    train, val, _test = split_benign(feature_matrix, labels)
 
     scaler = StandardScaler().fit(train)  # 정규화 기준은 '정상 train'에만 맞춘다 (누수 방지)
     model = train_model(scaler.transform(train), epochs=epochs)
@@ -67,11 +68,11 @@ def run(csv_glob, epochs=30, percentile=99.0):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="CSV glob 패턴, 예: data/*.csv")
-    ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument(
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", required=True, help="CSV glob 패턴, 예: data/*.csv")
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument(
         "--percentile", type=float, default=99.0, help="임계값 퍼센타일 (낮출수록 탐지율↑ 오탐률↑)"
     )
-    args = ap.parse_args()
+    args = parser.parse_args()
     run(args.data, epochs=args.epochs, percentile=args.percentile)

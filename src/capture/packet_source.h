@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "capture/packet_direction.h"
+
 // libnetfilter_queue의 C 타입은 전방 선언만 둔다 —
 // 이 헤더를 쓰는 쪽(PacketCapture)에 C API가 새어 나가지 않게 하기 위함이다(캡슐화)
 struct nfq_handle;
@@ -21,7 +23,8 @@ class PacketSource {
     // NFQUEUE는 콜백 기반으로 동작하므로, next_packet() 반환형 대신
     // 처리 함수를 등록받아 콜백에서 상위로 넘기는 방식을 택했다 (설계 문서 3.3절 참고).
     // 계약: 페이로드를 읽지 못했거나 처리 함수가 예외를 던진 패킷은 통과(fail-open)로 처리된다.
-    using PacketHandler = std::function<bool(const uint8_t* data, size_t len)>;
+    using PacketHandler =
+        std::function<bool(const uint8_t* data, size_t len, PacketDirection direction)>;
 
     // 약 1초마다 수신 루프 안에서 불리는 주기 작업 콜백 (BlockList·FlowManager 만료 정리용).
     using TickHandler = std::function<void()>;
@@ -50,6 +53,7 @@ class PacketSource {
     struct nfq_q_handle* queue_ = nullptr;  // 큐 핸들
     int fd_ = -1;                           // 넷링크 소켓 (handle_ 소유 — 직접 닫지 않음)
     std::atomic<bool> running_{false};
+    std::atomic<bool> stop_requested_{false};
 };
 
 #endif  // IPS_SRC_CAPTURE_PACKET_SOURCE_H_

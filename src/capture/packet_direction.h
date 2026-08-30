@@ -1,0 +1,10 @@
+#ifndef IPS_SRC_CAPTURE_PACKET_DIRECTION_H_
+#define IPS_SRC_CAPTURE_PACKET_DIRECTION_H_
+
+enum class PacketDirection {
+    INBOUND,
+    OUTBOUND,
+    UNKNOWN,
+};
+
+#endif  // IPS_SRC_CAPTURE_PACKET_DIRECTION_H_

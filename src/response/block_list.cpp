@@ -4,6 +4,13 @@
 
 #include "common/five_tuple.h"  // ip_to_string (네트워크 순서 uint32 → 문자열)
 
+namespace {
+
+// 패킷 처리 스레드가 대량 만료 정리에 오래 묶이지 않도록 틱당 작업량을 제한한다.
+constexpr size_t MAX_EXPIRY_CLEANUPS_PER_TICK = 16384;
+
+}  // namespace
+
 void BlockList::block(uint32_t ip, int ttl_seconds, TimePoint now) {
     const TimePoint expiry = now + std::chrono::seconds(ttl_seconds);
     // insert_or_assign: 신규 삽입이면 second=true. 조회를 한 번만 한다(find+[] 이중 조회 방지).
@@ -31,7 +38,9 @@ void BlockList::cleanup_expired(TimePoint now) {
     // 배출이 유입을 못 따라가면 힙이 무한히 자란다. 로그가 없는 pop은 건당 수백 ns라
     // 상한을 꽉 채워도 틱 하나가 수 ms를 넘지 않는다.
     size_t released = 0;
-    for (int i = 0; i < 16384 && !expiry_heap_.empty() && expiry_heap_.top().expiry <= now; ++i) {
+    for (size_t i = 0; i < MAX_EXPIRY_CLEANUPS_PER_TICK && !expiry_heap_.empty() &&
+                       expiry_heap_.top().expiry <= now;
+         ++i) {
         const HeapEntry entry = expiry_heap_.top();
         expiry_heap_.pop();
         const auto it = block_map_.find(entry.ip);

@@ -23,7 +23,7 @@ namespace {
 // 판정에 읽는 건 IP 헤더(옵션 포함 최대 60B)와 TCP 헤더 앞 20B뿐이라 128이면 여유 있다.
 // 패킷 길이 통계는 IP 헤더의 tot_len 필드에서 얻으므로 잘라 와도 값이 그대로고,
 // verdict는 커널의 원본 패킷에 적용되므로 동작도 변하지 않는다.
-// 페이로드 검사(AI 특징 추출)가 필요해지는 단계에서 늘린다.
+// L7 payload 내용을 검사하는 단계가 생기면 늘린다. AI는 헤더의 payload 길이만 사용한다.
 constexpr uint32_t MAX_COPY_BYTES = 128;
 // 수신 버퍼 = 최대 패킷 + 넷링크 메타데이터 여유분
 constexpr size_t RECV_BUFFER_BYTES = MAX_COPY_BYTES + 4096;
@@ -121,7 +121,7 @@ bool PacketSource::loop() {
     auto last_enobufs_log = Clock::now();
     uint64_t enobufs_since_log = 0;
 
-    while (running_) {
+    while (running_ && !stop_requested_) {
         const ssize_t received = recv(fd_, buffer, sizeof(buffer), 0);
         if (received > 0) {
             // 등록해 둔 콜백(on_packet_received)은 이 호출 안에서 불린다
@@ -163,7 +163,10 @@ bool PacketSource::loop() {
     return ok;
 }
 
-void PacketSource::stop() { running_ = false; }
+void PacketSource::stop() {
+    stop_requested_ = true;
+    running_ = false;
+}
 
 int PacketSource::on_packet_received(struct nfq_q_handle* queue, struct nfgenmsg* /*msg*/,
                                      struct nfq_data* packet_data, void* self_ptr) {
@@ -176,6 +179,12 @@ int PacketSource::on_packet_received(struct nfq_q_handle* queue, struct nfgenmsg
         return -1;
     }
     const uint32_t packet_id = ntohl(packet_header->packet_id);
+    PacketDirection direction = PacketDirection::UNKNOWN;
+    if (packet_header->hook == NF_INET_LOCAL_IN) {
+        direction = PacketDirection::INBOUND;
+    } else if (packet_header->hook == NF_INET_LOCAL_OUT) {
+        direction = PacketDirection::OUTBOUND;
+    }
 
     unsigned char* payload = nullptr;
     const int payload_len = nfq_get_payload(packet_data, &payload);
@@ -186,7 +195,8 @@ int PacketSource::on_packet_received(struct nfq_q_handle* queue, struct nfgenmsg
         // 예외가 C 라이브러리(nfq_handle_packet) 스택을 관통하면 미정의 동작이고,
         // 이 패킷은 verdict를 받지 못한 채 커널 큐에 남는다 — 여기서 막고 통과 처리한다
         try {
-            accept = self->handler_(payload, static_cast<size_t>(payload_len));
+            accept =
+                self->handler_(payload, static_cast<size_t>(payload_len), direction);
         } catch (const std::exception& e) {
             LOG(ERROR) << "패킷 처리 중 예외: " << e.what();
         } catch (...) {

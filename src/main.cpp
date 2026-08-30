@@ -1,10 +1,12 @@
 #include <unistd.h>
 
 #include <csignal>
+#include <memory>
 #include <utility>
 
 #include <glog/logging.h>
 
+#include "ai/logging_flow_consumer.h"
 #include "capture/packet_capture.h"
 #include "config/config.h"
 #include "response/whitelist.h"
@@ -44,7 +46,8 @@ int main(int /*argc*/, char* argv[]) {
         return 1;
     }
 
-    PacketCapture capture(*config, std::move(whitelist));
+    PacketCapture capture(*config, std::move(whitelist),
+                          std::make_unique<LoggingFlowConsumer>());
     g_capture = &capture;
 
     // Ctrl+C(SIGINT)·kill(SIGTERM)에서 수신 루프를 정상 종료시켜
@@ -53,8 +56,8 @@ int main(int /*argc*/, char* argv[]) {
     std::signal(SIGTERM, handle_signal);
 
     LOG(INFO) << "AI 기반 인라인 IPS — 2단계: 대응형 IPS (포트 스캔·SYN 플러드 차단)";
-    LOG(INFO) << "트래픽 유입 규칙 예: sudo iptables -I INPUT -j NFQUEUE --queue-num "
-              << config->queue_num << " --queue-bypass";
+    LOG(INFO) << "iptables INPUT·OUTPUT 규칙을 자동 관리합니다 (NFQUEUE "
+              << config->queue_num << ')';
 
     if (!capture.start()) {
         return 1;

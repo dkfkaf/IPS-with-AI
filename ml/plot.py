@@ -25,9 +25,9 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 PLOTS = os.path.join(ARTIFACTS, "plots")
 
 
-def _errors(model, mean, scale, X):
+def _errors(model, mean, scale, feature_matrix):
     """추론도 학습과 같은 기준으로 정규화 후 복원오차."""
-    return reconstruction_errors(model, (X - mean) / scale)
+    return reconstruction_errors(model, (feature_matrix - mean) / scale)
 
 
 def _plot_error_distribution(benign_err, attack_err, threshold, path):
@@ -95,26 +95,30 @@ def _plot_roc(benign_err, attack_err, threshold, path):
 
 
 def run(csv_glob):
+    """평가 데이터로 발표용 그래프 세 장을 생성해 artifacts 아래에 저장한다."""
     model, mean, scale, threshold = load_artifacts()
-    X, labels = load_dataset(csv_glob)
-    _train, _val, benign_test = split_benign(X, labels)
+    feature_matrix, labels = load_dataset(csv_glob)
+    _train, _val, benign_test = split_benign(feature_matrix, labels)
     attack_mask = labels != BENIGN_LABEL
-    attack_err = _errors(model, mean, scale, X[attack_mask])
-    benign_err = _errors(model, mean, scale, benign_test)
+    attack_errors = _errors(model, mean, scale, feature_matrix[attack_mask])
+    benign_errors = _errors(model, mean, scale, benign_test)
 
     os.makedirs(PLOTS, exist_ok=True)
     _plot_error_distribution(
-        benign_err, attack_err, threshold, os.path.join(PLOTS, "error_distribution.png")
+        benign_errors, attack_errors, threshold, os.path.join(PLOTS, "error_distribution.png")
     )
     _plot_detection_by_type(
-        attack_err, labels[attack_mask], threshold, os.path.join(PLOTS, "detection_by_type.png")
+        attack_errors,
+        labels[attack_mask],
+        threshold,
+        os.path.join(PLOTS, "detection_by_type.png"),
     )
-    _plot_roc(benign_err, attack_err, threshold, os.path.join(PLOTS, "roc.png"))
+    _plot_roc(benign_errors, attack_errors, threshold, os.path.join(PLOTS, "roc.png"))
     print(f"그래프 3장 저장 완료 → {PLOTS}")
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="CSV glob 패턴")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", required=True, help="CSV glob 패턴")
+    args = parser.parse_args()
     run(args.data)
