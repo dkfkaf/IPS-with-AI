@@ -62,8 +62,6 @@ class PlotTest(unittest.TestCase):
             "roc.png", _plot_roc, benign_errors, attack_errors, 0.35
         )
 
-    # TODO: plot.run이 LoadedArtifacts 계약을 사용하도록 고친 뒤 데코레이터를 제거한다.
-    @unittest.expectedFailure
     def test_run_uses_loaded_artifact_contract(self):
         artifacts = SimpleNamespace(
             model=object(),

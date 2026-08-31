@@ -42,7 +42,7 @@ C++ 센서와 Python AI 엔진은 ZeroMQ로 통신하며, 데이터는 JSON으�
 apt update
 apt install cmake build-essential iptables libnetfilter-queue-dev libgoogle-glog-dev \
   nlohmann-json3-dev libzmq3-dev cppzmq-dev qtbase5-dev libgtest-dev \
-  python3-pip
+  python3-pip python3-venv
 
 install -d -m 0755 -o root -g root /opt/ips-with-ai/python-packages
 /usr/bin/python3 -m pip install --target /opt/ips-with-ai/python-packages \
@@ -91,6 +91,9 @@ python3 -m venv .venv
 .venv/bin/pip install -r ml/requirements.txt
 .venv/bin/python -m unittest discover -s tests -p "test_*.py"
 ```
+
+현재 `test_plot.PlotTest.test_run_uses_loaded_artifact_contract`는 `plot.run()`의 artifact 로더
+계약을 수정하기 전까지 실패하는 릴리스 차단 테스트입니다.
 
 NFQUEUE·재시작·Qt 알림은 별도 통합 검증 범위입니다.
 
