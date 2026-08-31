@@ -23,6 +23,11 @@ class ZeroModel(torch.nn.Module):
         return torch.zeros_like(value)
 
 
+class NanModel(torch.nn.Module):
+    def forward(self, value):
+        return torch.full_like(value, float("nan"))
+
+
 def make_artifacts(model: torch.nn.Module, threshold: float) -> LoadedArtifacts:
     return LoadedArtifacts(
         model=model,
@@ -52,6 +57,13 @@ def make_request() -> dict[str, object]:
 
 
 class OnlineInferenceTest(unittest.TestCase):
+    def assert_request_error(self, request, expected_code, expected_message):
+        artifacts = make_artifacts(torch.nn.Identity(), threshold=0.1)
+        with self.assertRaises(RequestError) as raised:
+            infer_request(artifacts, request)
+        self.assertEqual(raised.exception.code, expected_code)
+        self.assertEqual(str(raised.exception), expected_message)
+
     def test_identity_model_returns_normal_decision(self):
         response = infer_request(
             make_artifacts(torch.nn.Identity(), threshold=0.1), make_request()
@@ -79,51 +91,77 @@ class OnlineInferenceTest(unittest.TestCase):
         self.assertAlmostEqual(response["score"], 4.0)
         self.assertEqual(response["threshold"], 3.5)
 
-    def test_invalid_requests_return_specific_error_codes(self):
-        cases = []
-
+    def test_schema_validation_returns_specific_errors(self):
         wrong_schema = make_request()
         wrong_schema["schema_version"] = 2
-        cases.append(("schema", wrong_schema, SCHEMA_MISMATCH))
-
         wrong_feature_schema = make_request()
         wrong_feature_schema["feature_schema_version"] = 2
-        cases.append(
-            ("feature schema", wrong_feature_schema, FEATURE_SCHEMA_MISMATCH)
-        )
 
+        cases = [
+            ([], INVALID_FIELD, "요청이 JSON object가 아님"),
+            ({}, INVALID_FIELD, "flow_id 오류"),
+            (wrong_schema, SCHEMA_MISMATCH, "schema_version 오류"),
+            (
+                wrong_feature_schema,
+                FEATURE_SCHEMA_MISMATCH,
+                "feature_schema_version 오류",
+            ),
+        ]
+        for request, code, message in cases:
+            with self.subTest(message=message):
+                self.assert_request_error(request, code, message)
+
+    def test_flow_metadata_validation_returns_specific_errors(self):
         ipv6 = make_request()
         ipv6["src_ip"] = "2001:db8::1"
-        cases.append(("IPv6", ipv6, INVALID_FIELD))
-
         boolean_port = make_request()
         boolean_port["src_port"] = True
-        cases.append(("boolean port", boolean_port, INVALID_FIELD))
-
+        oversized_port = make_request()
+        oversized_port["dst_port"] = 65536
+        oversized_protocol = make_request()
+        oversized_protocol["protocol"] = 256
         reversed_time = make_request()
         reversed_time["first_seen_ms"] = 3000
-        cases.append(("time order", reversed_time, INVALID_FIELD))
+        invalid_reason = make_request()
+        invalid_reason["end_reason"] = "manual"
 
+        cases = [
+            (ipv6, "src_ip IPv4 오류"),
+            (boolean_port, "src_port 정수 필드 오류"),
+            (oversized_port, "dst_port 범위 오류"),
+            (oversized_protocol, "protocol 범위 오류"),
+            (reversed_time, "Flow 시간 순서 오류"),
+            (invalid_reason, "end_reason 오류"),
+        ]
+        for request, message in cases:
+            with self.subTest(message=message):
+                self.assert_request_error(request, INVALID_FIELD, message)
+
+    def test_feature_validation_returns_specific_errors(self):
         wrong_count = make_request()
         wrong_count["features"] = [0.0]
-        cases.append(("feature count", wrong_count, FEATURE_COUNT_MISMATCH))
-
         boolean_feature = make_request()
         boolean_feature["features"] = [False] * len(FEATURES)
-        cases.append(("boolean feature", boolean_feature, INVALID_FIELD))
-
         nonfinite = make_request()
         nonfinite_features = [0.0] * len(FEATURES)
         nonfinite_features[0] = float("nan")
         nonfinite["features"] = nonfinite_features
-        cases.append(("nonfinite feature", nonfinite, NONFINITE_FEATURE))
+        out_of_float_range = make_request()
+        out_of_float_range["features"][0] = 10**400
 
-        artifacts = make_artifacts(torch.nn.Identity(), threshold=0.1)
-        for name, request, expected_code in cases:
-            with self.subTest(name=name):
-                with self.assertRaises(RequestError) as raised:
-                    infer_request(artifacts, request)
-                self.assertEqual(raised.exception.code, expected_code)
+        cases = [
+            (wrong_count, FEATURE_COUNT_MISMATCH, "특징 개수 오류"),
+            (boolean_feature, INVALID_FIELD, "특징 타입 오류"),
+            (nonfinite, NONFINITE_FEATURE, "특징에 NaN 또는 Inf 포함"),
+            (out_of_float_range, NONFINITE_FEATURE, "특징 숫자 범위 오류"),
+        ]
+        for request, code, message in cases:
+            with self.subTest(message=message):
+                self.assert_request_error(request, code, message)
+
+    def test_nonfinite_model_error_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "모델 복원오차가 유한하지 않음"):
+            infer_request(make_artifacts(NanModel(), threshold=0.1), make_request())
 
 
 if __name__ == "__main__":
