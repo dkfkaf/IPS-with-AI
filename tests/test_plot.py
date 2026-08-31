@@ -23,7 +23,12 @@ from ml.plot import (
 class PlotTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.previous_font_family = matplotlib.rcParams["font.family"]
         matplotlib.rcParams["font.family"] = "DejaVu Sans"
+
+    @classmethod
+    def tearDownClass(cls):
+        matplotlib.rcParams["font.family"] = cls.previous_font_family
 
     def test_error_distribution_writes_png(self):
         benign_errors = np.array([0.1, 0.2, 0.3])
@@ -57,6 +62,7 @@ class PlotTest(unittest.TestCase):
             "roc.png", _plot_roc, benign_errors, attack_errors, 0.35
         )
 
+    # TODO: plot.run이 LoadedArtifacts 계약을 사용하도록 고친 뒤 데코레이터를 제거한다.
     @unittest.expectedFailure
     def test_run_uses_loaded_artifact_contract(self):
         artifacts = SimpleNamespace(

@@ -84,7 +84,15 @@ ctest --test-dir build --output-on-failure
 
 C++ GTest는 설정·플로우·Rule·AI 프로토콜과 비동기 큐를 검증합니다. Python `unittest`는 요청
 검증·이상 판정·artifact 계약을 검증하며, root 전용 권한·symbolic link 검사는 root 실행에서만
-활성화됩니다. NFQUEUE·재시작·Qt 알림은 아래 가상환경 통합 검증 범위입니다.
+활성화됩니다. 학습·평가·그래프까지 포함한 전체 Python 테스트는 오프라인 가상환경에서 실행합니다.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r ml/requirements.txt
+.venv/bin/python -m unittest discover -s tests -p "test_*.py"
+```
+
+NFQUEUE·재시작·Qt 알림은 별도 통합 검증 범위입니다.
 
 ### 실행
 

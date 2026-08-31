@@ -161,8 +161,10 @@ set_tests_properties(async_ai_client_test PROPERTIES TIMEOUT 20)
 
 add_test(
     NAME online_ai_python_test
-    COMMAND ${Python3_EXECUTABLE} -m unittest discover
-            -s ${CMAKE_SOURCE_DIR}/tests -p test_*.py
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.test_artifacts
+            tests.test_online_ai
+            tests.test_online_server
 )
 set_tests_properties(online_ai_python_test PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
