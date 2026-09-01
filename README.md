@@ -132,6 +132,7 @@ iptables -S IPS_WITH_AI
 | [플로우 특징 토대](docs/design/flow_features.md) | AI 연동 준비 — 양방향 플로우·특징 원재료 |
 | [AI 학습 설계](docs/design/ai_training.md) | CICIDS2017 기반 오토인코더 오프라인 학습 |
 | [온라인 추론·차단 설계](docs/design/online_inference.md) | AI 이벤트, fail-open, 후속 플로우 TTL 차단 |
+| [Suricata 장점 확장 설계](docs/superpowers/specs/2026-09-01-suricata-inspired-expansion-design.md) | DNS·Rule·EVE·재조립·L7·IPv6 단계별 확장 |
 | [상용 제품 대비](docs/design/commercial_comparison.md) | 상용 IPS/NGFW와의 기능 차이와 프로젝트 범위 |
 | [코드 원리](docs/code_explained.md) | 코드가 왜 이렇게 짜였나 (1·2단계) |
 | [코딩 스타일](docs/coding_style.md) | 어떻게 짜는가 |
