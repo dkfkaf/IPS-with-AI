@@ -24,6 +24,7 @@
 9. HTTP/1과 복호화 없는 TLS 메타데이터 분석
 10. HTTP 파일의 스트리밍 SHA-256 검사
 11. IPv6 Rule·로그·차단 기반
+12. DNS·HTTP·TLS 관찰 자료의 버전 계약과 AI 학습 데이터 수집 기반
 
 ### 2.2 장기 확장 범위
 
@@ -33,6 +34,7 @@
 - 문자열 데이터셋과 더 넓은 앱 계층 Rule
 - `reject`, syslog, fast.log
 - 텍스트 Rule DSL
+- 검증된 별도 데이터셋을 사용하는 DNS·HTTP·TLS 전용 AI 모델
 
 ### 2.3 구현하지 않는 기능
 
@@ -96,7 +98,9 @@ Compiled Rule Engine
         ├── drop
         └── alert
         │
-        ├── 기존 AI Flow 분석·후속 IP 차단
+        ├── AI Router ── 기존 Flow 모델
+        │             └── 선택적 DNS·HTTP·TLS 모델
+        │                    └── 이상 알림·후속 IP 차단
         └── bounded Event Queue ── EVE JSON Writer
 
 config/rules/datasets 파일
@@ -106,8 +110,9 @@ config/rules/datasets 파일
                  └── 새 정책 검증 ── 성공 시 원자적 교체
 ```
 
-AI는 계속 종료된 Flow를 비동기로 판단한다. DNS·HTTP·TLS Rule은 현재 패킷 또는 재조립된 현재
-세션에서 판단하므로 AI와 역할이 다르다.
+Rule은 현재 패킷 또는 재조립된 현재 세션을 즉시 판단한다. AI는 종료된 Flow와 크기가 제한된
+프로토콜 관찰 자료를 비동기로 판단한다. 따라서 AI 장애나 지연이 현재 패킷 verdict를 기다리게
+하지 않는다.
 
 ## 5. 공통 데이터 계약
 
@@ -530,10 +535,176 @@ IPv6 fragment는 TCP reassembly와 별도의 IP fragment 문제다. 완전한 fr
 ### 17.2 AI 정책
 
 IPv6를 Rule로 처리할 수 있다는 이유만으로 기존 IPv4 학습 모델에 보내지 않는다. AI request
-schema와 학습 데이터가 IPv6 Flow를 검증하기 전까지 IPv6는 `AI_UNSUPPORTED`로 기록하고 Rule
-경로만 사용한다. 새 모델을 도입할 때 feature schema version을 올린다.
+schema 2가 IPv6 주소를 표현하고, 해당 모델 metadata가 IPv6 지원을 선언하며, IPv6 검증 자료의
+평가 기준을 통과한 경우에만 그 모델로 보낸다. 그전에는 `AI_UNSUPPORTED`로 기록하고 Rule 경로만
+사용한다. 특징의 의미와 순서가 같다면 재학습만으로 feature schema version을 올리지 않고 model
+version만 바꾼다.
 
-## 18. 동시성과 소유권
+## 18. 확장 기능과 AI 모델 연동
+
+### 18.1 한 모델에 모든 값을 억지로 넣지 않는다
+
+현재 오토인코더는 CICIDS2017과 맞춘 27개 Flow 통계만 입력받는다. DNS 이름, HTTP header, TLS
+SNI 같은 값은 학습에 없었으므로 기존 27개 배열 뒤에 붙이거나 값이 없을 때 0으로 채우지 않는다.
+0은 "관찰하지 못함"이 아니라 실제 값으로 학습될 수 있어 판정을 왜곡하기 때문이다.
+
+AI는 다음처럼 역할을 나눈다.
+
+| 모델 | 입력 | 적용 시점 |
+| --- | --- | --- |
+| `flow_autoencoder_v1` | 현재 27개 Flow 통계 | 현재와 동일하게 종료된 지원 Flow마다 실행 |
+| `dns_model_v1` | DNS 관찰 자료 | 별도 DNS 데이터셋과 평가가 준비된 뒤 선택 실행 |
+| `http_model_v1` | HTTP 관찰 자료 | HTTP parser와 별도 데이터셋 검증 뒤 선택 실행 |
+| `tls_model_v1` | TLS 관찰 자료 | TLS parser와 별도 데이터셋 검증 뒤 선택 실행 |
+
+HTTP 파일의 SHA-256 dataset 일치는 입력과 결과가 명확한 결정적 판정이므로 기본적으로 AI에
+맡기지 않는다. 나중에 파일 메타데이터 모델을 추가하더라도 hash Rule과 별도 결과로 취급한다.
+
+### 18.2 C++이 만드는 관찰 자료
+
+parser는 원본 payload 대신 크기가 제한된 구조화 자료인 `ProtocolObservation`을 만든다. 각 자료는
+자체 `schema_version`을 가져 한 프로토콜의 필드 변경이 기존 Flow 모델을 깨뜨리지 않게 한다.
+
+- DNS: 정규화된 query 이름, query type, response code, answer 수, 응답 IP 수, 크기·TTL 요약
+- HTTP: method, host, path·header·body 길이, status, content type 요약
+- TLS: version, SNI, ALPN, cipher·extension 수, 인증서 metadata 요약
+
+비밀번호, cookie, authorization 값, 전체 body와 원본 파일은 AI 요청에 넣지 않는다. 문자열과 배열의
+최대 길이, Flow당 observation 개수, 전체 요청 bytes 상한을 설정으로 고정한다. 상한을 넘은 자료는
+잘라서 모델에 보내지 않고 `AI_OBSERVATION_LIMIT`으로 건너뛴다.
+
+### 18.3 요청과 응답 계약
+
+기존 요청 schema 1은 한 Flow 모델만 표현한다. 확장 요청 schema 2는 공통 Flow와 여러 관찰 자료를
+분리한다.
+
+```json
+{
+  "schema_version": 2,
+  "flow_id": "boot-id:42",
+  "flow": {
+    "src_ip": "192.0.2.10",
+    "src_port": 53000,
+    "dst_ip": "198.51.100.53",
+    "dst_port": 53,
+    "protocol": 17,
+    "first_seen_ms": 1788192000000,
+    "last_seen_ms": 1788192000120,
+    "end_reason": "timeout",
+    "feature_schema_version": 1,
+    "features": [27]
+  },
+  "observations": [
+    {"type": "dns", "schema_version": 1, "query_name": "example.test"}
+  ],
+  "requested_models": ["flow_autoencoder_v1", "dns_model_v1"]
+}
+```
+
+`features: [27]`은 설명용 표기이며 실제 요청에는 유한한 숫자 27개가 들어간다. Python의 AI Router는
+요청된 모델 중 입력 종류·schema·IP version이 맞는 것만 실행한다. 관찰 자료가 없거나 호환되지
+않으면 임의 값을 채우지 않고 이유와 함께 건너뛴다.
+
+응답은 모델별 결과와 최종 종합 결과를 함께 돌려준다.
+
+```json
+{
+  "schema_version": 2,
+  "flow_id": "boot-id:42",
+  "ok": true,
+  "aggregate_anomaly": true,
+  "results": [
+    {
+      "model_name": "flow_autoencoder_v1",
+      "model_version": "2026-09-01T00:00:00Z",
+      "status": "ok",
+      "anomaly": true,
+      "score": 0.42,
+      "threshold": 0.30
+    },
+    {
+      "model_name": "dns_model_v1",
+      "status": "skipped",
+      "reason": "MODEL_NOT_INSTALLED"
+    }
+  ]
+}
+```
+
+`aggregate_anomaly`는 성공한 활성 모델 중 하나라도 이상이면 `true`다. 각 모델은 오프라인 평가를
+통과한 뒤 설정에서 명시적으로 활성화하므로, 검증되지 않은 모델 결과를 가중 평균하는 기능은
+두지 않는다. 요청 자체가 잘못됐거나 실행에 성공한 모델이 하나도 없으면 `ok=false`이며 차단하지
+않는다.
+
+### 18.4 AI Router, 전처리와 모델 registry
+
+연결 흐름은 `C++ parser → ProtocolObservation → JSON → Python validator → model별 vectorizer →
+scaler/model → 모델별 결과`다. AI Router는 모델 이름에 맞는 validator와 vectorizer를 선택한다.
+DNS 이름이나 TLS SNI를 어떤 숫자로 바꿀지는 C++ parser가 결정하지 않는다. Python의 모델별
+전처리가 길이·문자 종류·label 수 같은 고정 특징으로 변환하며, 학습과 온라인 추론이 같은 전처리
+함수를 공유한다.
+
+각 모델 artifact metadata에는 모델 이름·버전, 입력 종류, 입력 schema, 지원 IP version, 특징
+목록·순서, 전처리 version, scaler, threshold를 기록한다. 문자열 vocabulary 같은 학습 산출물이
+필요하면 같은 artifact 디렉터리의 고정 파일로 저장하고 안전 검사를 거친다. C++은 AI 시작 알림에서
+활성 모델과 버전을 받은 뒤, 응답의 `flow_id`, 모델 이름, 상태를 검증한다. `status=ok` 결과에는
+시작 알림과 같은 model version 및 유한한 음이 아닌 score·threshold를 요구하고, `skipped`에는
+정해진 reason을 요구한다. 출발지 IP는 AI 응답을 신뢰하지 않고 C++가 보관한 원본 Flow에서만
+가져온다.
+
+기존 Flow 모델은 AI 엔진의 필수 모델이다. 선택적 DNS·HTTP·TLS 모델 하나의 파일·schema·추론이
+실패해도 다른 모델과 Rule 경로는 계속 동작한다. AI queue 포화, 응답 timeout, 모든 모델 실패는
+기존 fail-open 정책대로 현재 패킷을 통과시키고 카운터와 이벤트를 남긴다.
+
+모델 load 오류와 Python 예외는 모델별로 격리한다. native library hang이나 process OOM까지 모델별
+격리하려면 별도 process가 필요하므로 졸업작품 범위에서는 AI supervisor가 전체 Python server를
+재시작한다. 이런 장애에서도 C++ Rule 경로는 계속 동작한다. 활성 모델 수와 전체 p95 추론 시간은
+기존 response timeout 안에 여유 있게 들어오는 값으로 제한하고 VM 측정 결과로 확정한다.
+
+### 18.5 Rule과 AI 결과를 합치는 방법
+
+1. Rule의 `drop`, `pass`, `alert`는 현재 패킷 경로에서 즉시 적용한다.
+2. AI는 Flow 종료 뒤 결과가 오므로 이미 전달된 패킷을 소급 차단하지 않는다.
+3. `aggregate_anomaly=true`면 지금까지 합의한 정책대로 사용자에게 모델별 근거를 알리고, whitelist를
+   다시 확인한 뒤 동일 출발지의 후속 inbound Flow를 기존 TTL 동안 차단한다.
+4. 늦게 도착한 결과, 알 수 없는 Flow, 버전이 다른 결과는 폐기한다.
+5. Rule 이벤트와 AI 이벤트는 별도로 남겨 어떤 판단이 실제 차단 원인이었는지 구분한다.
+
+Qt 알림은 모델 이름·점수·임계값과 후속 차단 TTL을 요약한다. EVE `ai` object에는 모델별 결과와
+건너뛴 이유를 기록하되 27개 원본 특징과 민감한 프로토콜 문자열은 기본 기록하지 않는다.
+
+### 18.6 학습 자료와 출시 조건
+
+CICIDS2017은 기존 Flow 모델에만 사용한다. DNS·HTTP·TLS 학습자료는 운영 트래픽을 몰래 저장해서
+만들지 않는다. label 근거가 있는 PCAP와 manifest를 PCAP replay에 입력하고, 런타임 parser가 만든
+것과 같은 observation schema의 JSON Lines를 오프라인으로 내보낸다. Python은 패킷을 다시 따로
+해석하지 않고 이 자료만 전처리한다.
+
+자료는 capture session 또는 시간 단위로 train·validation·test를 분리한다. 같은 세션의 패킷이
+서로 다른 분할에 섞이면 결과가 과대평가되므로 금지한다.
+
+프로토콜 모델은 다음이 모두 준비되기 전에는 "지원"으로 표시하지 않는다.
+
+1. 정상·이상 자료의 출처와 label 근거
+2. 고정된 observation schema와 전처리
+3. 정상 오탐률, 공격 종류별 탐지율, 추론 시간·메모리 평가
+4. PCAP replay로 C++ 관찰값과 Python 학습값이 같은지 확인하는 계약 테스트
+5. 실패 시 해당 모델만 끄고 기존 Flow AI와 Rule로 복귀하는 통합 테스트
+
+DNS 단계에서는 먼저 Rule과 observation 수집까지만 완성한다. DNS AI 모델은 자료와 평가가 준비된
+뒤 별도 구현 단계로 추가한다. HTTP와 TLS도 같은 순서를 따른다.
+
+### 18.7 schema 1에서 2로 안전하게 옮기는 순서
+
+1. C++이 기존 응답 1과 새 응답 2를 모두 읽되 요청은 계속 1로 보낸다.
+2. Python이 요청 1·2를 모두 받고 시작 알림에 지원 schema와 모델 목록을 추가한다.
+3. C++이 schema 2 지원을 확인했을 때만 요청 2를 보낸다.
+4. 배포·rollback 검증 뒤 schema 2를 기본으로 바꾼다.
+
+이 순서에서는 한쪽만 먼저 업데이트되어도 기존 Flow AI가 즉시 중단되지 않는다. schema 1 제거는
+별도 호환성 종료 결정으로 남긴다.
+
+## 19. 동시성과 소유권
 
 | 실행 위치 | 소유 상태 |
 | --- | --- |
@@ -547,7 +718,7 @@ schema와 학습 데이터가 IPv6 Flow를 검증하기 전까지 IPv6는 `AI_UN
 상태를 여러 스레드가 직접 수정하지 않는다. control과 AI 결과는 bounded message queue로 캡처
 스레드에 전달한다. reload 결과는 읽기 전용 정책 pointer로만 전달한다.
 
-## 19. 설정 개요
+## 20. 설정 개요
 
 세부 기본값과 범위는 구현 계획에서 테스트와 함께 확정한다. 구조는 다음처럼 분리한다.
 
@@ -579,14 +750,28 @@ schema와 학습 데이터가 IPv6 Flow를 검증하기 전까지 IPv6는 `AI_UN
     "enabled": false,
     "max_flow_bytes": 1048576,
     "max_total_bytes": 268435456
+  },
+  "ai": {
+    "artifact_dir": "ml/artifacts",
+    "max_observations_per_flow": 16,
+    "max_observation_bytes": 16384,
+    "protocol_models": [
+      {
+        "name": "dns_model_v1",
+        "enabled": false,
+        "artifact_dir": "ml/artifacts/dns"
+      }
+    ]
   }
 }
 ```
 
 숫자는 초기 설계 상한 예시다. 실제 기본값은 VM 기준선 측정 뒤 확정한다. 잘못된 타입·음수·상한
-초과는 자동 보정하지 않고 명확한 오류로 거부한다.
+초과는 자동 보정하지 않고 명확한 오류로 거부한다. 기존 `ai.artifact_dir`은 Flow 모델 경로로
+유지한다. 프로토콜 모델은 기본 비활성이고 이름 중복, 안전하지 않은 경로, metadata 불일치가 있으면
+그 모델만 비활성화한다. 통신 schema는 설정값으로 강제하지 않고 18.7의 기능 협상으로 선택한다.
 
-## 20. 보안 경계
+## 21. 보안 경계
 
 - 설정·Rule·dataset·로그 디렉터리는 root 소유와 쓰기 권한을 검증한다.
 - 새 입력 파일은 일반 파일만 허용하고 symbolic link를 거부한다.
@@ -597,9 +782,9 @@ schema와 학습 데이터가 IPv6 Flow를 검증하기 전까지 IPv6는 `AI_UN
 - 로그 회전 실패와 디스크 부족이 packet verdict를 막지 않는다.
 - 외부 데이터 자동 다운로드와 코드 실행형 Rule은 허용하지 않는다.
 
-## 21. 테스트 전략
+## 22. 테스트 전략
 
-### 21.1 단위 테스트
+### 22.1 단위 테스트
 
 - IPv4/IPv6 address와 CIDR
 - DNS 정상·압축·손상·순환 pointer
@@ -612,18 +797,24 @@ schema와 학습 데이터가 IPv6 Flow를 검증하기 전까지 IPv6는 `AI_UN
 - HTTP chunk·길이·손상 입력
 - TLS ClientHello·잘림·상한
 - SHA-256 완료·중단·크기 상한
+- AI Router 모델 선택·schema/IP version 불일치·observation 없음
+- 선택 모델 load·추론 실패와 일부 성공 응답
+- 모델별 결과 종합·늦은 응답·알 수 없는 Flow·버전 불일치
 
-### 21.2 PCAP golden test
+### 22.2 PCAP golden test
 
 각 PCAP마다 예상 Flow, event type, sid, action을 고정한다. 동일 PCAP를 반복해 같은 결과가 나와야
 한다. 정상 패킷이 새 parser 때문에 차단되지 않는 것도 함께 검증한다.
 
-### 21.3 fuzz test
+DNS·HTTP·TLS PCAP에는 예상 `ProtocolObservation`도 고정한다. 학습 전처리가 같은 PCAP에서 만든
+값과 일치해야 프로토콜 모델을 활성화할 수 있다.
+
+### 22.3 fuzz test
 
 DNS, TCP segment 삽입, HTTP, TLS, Rule JSON loader를 독립 fuzz 대상으로 만든다. 최소 기준은
 crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 없는 것이다.
 
-### 21.4 VM 통합 테스트
+### 22.4 VM 통합 테스트
 
 - NFQUEUE INPUT·OUTPUT 자동 등록과 종료 정리
 - DNS 악성 도메인 alert/drop
@@ -633,8 +824,10 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 - 악성 SHA-256 이벤트와 후속 정책
 - IPv6 Rule·화이트리스트·TTL
 - AI 장애 중 새 Rule 경로 지속
+- 선택적 프로토콜 모델 장애 중 기존 Flow AI 지속
+- AI 이상 알림과 동일 출발지 후속 inbound Flow의 TTL 차단
 
-## 22. 측정과 완료 조건
+## 23. 측정과 완료 조건
 
 각 단계는 다음 조건을 만족해야 다음 단계로 넘어간다.
 
@@ -644,28 +837,31 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 4. 설정된 메모리·queue 상한을 지킨다.
 5. 기준선 대비 처리량·p50/p95 지연·메모리 변화를 기록한다.
 6. 구현된 기능과 아직 지원하지 않는 조건을 README에 구분한다.
+7. 새 AI 모델은 고정 test 자료의 오탐률·공격별 탐지율·추론 시간을 기록한다.
 
 임의의 성능 합격값을 미리 만들지 않는다. 단계 0 기준선을 측정한 뒤 허용 회귀 폭을 구현 계획에
 기록한다.
 
-## 23. 구현 단계와 커밋 경계
+## 24. 구현 단계와 커밋 경계
 
 | 순서 | 결과물 | 다른 단계와 섞지 않을 것 |
 | --- | --- | --- |
 | 0 | 기존 오류 수정·VM 기준선 | 신규 기능 |
 | 1 | PCAP source·golden harness | DNS·Rule |
-| 2 | DNS parser·dataset | TCP 재조립 |
+| 2 | DNS parser·dataset·DNS observation | TCP 재조립 |
 | 3 | event writer·Rule·상태 | L7 parser |
 | 4 | control·atomic reload | 새 Rule field |
 | 5 | TCP reassembly | HTTP/TLS |
-| 6 | HTTP/1·TLS metadata | file hashing |
+| 6 | HTTP/1·TLS metadata·observation | file hashing |
 | 7 | HTTP SHA-256 | 원본 격리 저장 |
 | 8 | 공통 IP 타입·IPv6 | AI schema 변경 |
+| 9 | AI schema 2·Router·PCAP observation exporter | 프로토콜 모델 학습 |
+| 10+ | 검증 자료가 준비된 프로토콜 모델 하나씩 | 여러 모델 동시 추가 |
 
 각 행은 다시 테스트 가능한 작은 커밋들로 나눈다. 기능 코드와 대규모 포맷 변경은 같은 커밋에
 넣지 않는다.
 
-## 24. 예상 코드 영역
+## 25. 예상 코드 영역
 
 | 위치 | 책임 |
 | --- | --- |
@@ -678,13 +874,14 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 | `src/event/` | SecurityEvent, queue, EVE writer·rotation |
 | `src/control/` | root Unix socket과 reload 요청 |
 | `src/config/` | 새 상한·경로·기능 flag 검증 |
-| `src/ai/` | 기존 AI 계약과 새 protocol 지원 정책 |
+| `src/ai/` | schema 1·2 계약, bounded observation, 결과 검증과 AI Router 입력 |
+| `ml/` | 모델 registry, protocol별 validator·전처리·추론과 독립 artifact loader |
 | `tests/fixtures/` | 재배포 가능한 packet·PCAP·expected 결과 |
 
 디렉터리는 책임 경계를 설명하기 위한 설계 이름이다. 구현 계획에서 기존 코드와의 중복을 확인한
 뒤 정확한 파일 단위로 확정한다.
 
-## 25. 기존 문서와의 관계
+## 26. 기존 문서와의 관계
 
 - 기존 `overview.md`, `online_inference.md`, `2026-08-28-online-ai-tray-design.md`는 현재 구현의
   기준이다.
