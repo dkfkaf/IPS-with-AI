@@ -134,12 +134,14 @@ ruff check detector.py
 리팩토링의 가장 큰 위험은 구조를 바꾸다 기능을 망가뜨리는 것이다. 아래 수칙으로 방지한다.
 
 - **Git 커밋을 분리한다.** 기능 추가 커밋과 리팩토링 커밋을 섞지 않는다. 그래야 문제가 생겼을 때 리팩토링 커밋만 되돌릴 수 있다.
-- **리팩토링 전후로 동작을 확인한다.** 단위 테스트를 도입하기 전까지는 수동 테스트로 대체한다. 리팩토링 전에 프로그램을 돌려 정상 동작을 확인해두고, 리팩토링 후 다시 돌려 동일하게 동작하는지 비교한다.
+- **리팩토링 전후로 동작을 확인한다.** 기존 C++·Python 자동 테스트로 기준선을 확인하고, 변경 뒤 같은 테스트를 실행한다. 공개 인터페이스·반환값·오류 메시지를 유지하며 자동 테스트가 다루지 못하는 운영 경로는 수동 검증으로 보완한다.
 - **한 번에 하나씩.** 여러 곳을 동시에 뜯어고치지 말고, 작은 단위로 바꾸고 확인하기를 반복한다.
 
-### 6.3 향후
+### 6.3 현재 테스트 기준
 
-화이트리스트·TTL 등 핵심 로직이 복잡해지면 **Google Test로 단위 테스트를 도입**한다. 테스트가 있으면 리팩토링 후 즉시 기능 정상 여부를 확인할 수 있어, 수동 테스트보다 훨씬 안전하고 빠르다.
+C++는 Google Test, Python은 unittest 기반 테스트가 이미 있다. 테스트 파일이 있다는 사실과
+전체 테스트가 통과했다는 사실을 구분하고, 실행 환경·명령·결과를 기록한다. 포맷만 바꾸는 작업과
+의미 있는 구조 개선도 분리한다. 실행 명령은 [README](../README.md)를 따른다.
 
 ---
 
@@ -159,16 +161,16 @@ ruff check detector.py
 
 | 클래스 | 숨기는 것 | 여는 통로(예) |
 | --- | --- | --- |
-| `BlockList` | map + min-heap (항상 함께 갱신돼야 함) | `Block()`, `IsBlocked()`, `CleanupExpired()` |
-| `FlowManager` | 플로우 저장 자료구조 | `AddPacket()`, `GetFlow()` |
-| `Whitelist` | 설정 파일에서 읽은 IP 목록 | `IsWhitelisted()` |
+| `BlockList` | map + min-heap (항상 함께 갱신돼야 함) | `block()`, `is_blocked()`, `cleanup_expired()` |
+| `FlowManager` | 플로우 저장 자료구조 | `add_packet()`, `get_flow()` |
+| `Whitelist` | 설정 파일에서 읽은 IP 목록 | `is_whitelisted()` |
 
 ```cpp
 class BlockList {
  public:
-  void Block(uint32_t ip, int ttl_seconds);   // 차단 추가 (map+heap 동시 갱신)
-  bool IsBlocked(uint32_t ip);                 // 차단 여부 확인
-  void CleanupExpired();                       // 만료된 항목 정리
+  void block(uint32_t ip, int ttl_seconds);   // 차단 추가 (map+heap 동시 갱신)
+  bool is_blocked(uint32_t ip);                 // 차단 여부 확인
+  void cleanup_expired();                       // 만료된 항목 정리
 
  private:
   std::unordered_map<uint32_t, TimePoint> block_map_;   // IP → 만료 시각
@@ -176,7 +178,7 @@ class BlockList {
 };
 ```
 
-`block_map_`과 `expiry_heap_`이 `private`이라 바깥에서 직접 접근할 수 없다. 반드시 `Block()`을 거치므로 두 자료구조가 어긋날 일이 없다.
+`block_map_`과 `expiry_heap_`이 `private`이라 바깥에서 직접 접근할 수 없다. 반드시 `block()`을 거치므로 두 자료구조가 어긋날 일이 없다.
 
 ### 7.1.1 좋은 코드가 갖추는 것
 
@@ -226,12 +228,12 @@ bool FlowManager::init() {
 class Rule {
  public:
   virtual ~Rule() = default;
-  virtual bool IsMatch(const Flow& flow) = 0;   // 자식이 각자 구현
+  virtual bool is_match(const Flow& flow) = 0;   // 자식이 각자 구현
 };
 
 class PortScanRule : public Rule {
  public:
-  bool IsMatch(const Flow& flow) override { /* 포트 스캔 판정 */ }
+  bool is_match(const Flow& flow) override { /* 포트 스캔 판정 */ }
 };
 ```
 

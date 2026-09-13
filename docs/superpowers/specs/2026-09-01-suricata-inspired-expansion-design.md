@@ -1,9 +1,14 @@
 # Suricata 장점을 반영한 AI IPS 확장 설계
 
+> 상태: 확장 설계이며 구현 완료 목록이 아니다. 2026-09-12의
+> [핵심 정책 보완](2026-09-12-core-policy-clarification-design.md)을 함께 적용한다.
+
 ## 1. 이 문서의 목적
 
 현재 프로젝트는 IPv4 TCP·UDP 패킷을 NFQUEUE로 받아 포트 스캔·SYN Flood Rule을 즉시
-적용하고, 종료된 Flow는 AI로 분석해 이상 알림과 후속 출발지 차단을 수행한다.
+적용하고, 제출 조건을 충족한 종료 Flow는 AI로 분석한다. 이상 판정 적용 이후 해당 출발지 IP의
+수신 패킷을 TTL 동안 차단한다. 새 연결뿐 아니라 기존 연결도 영향받으며, 이미 통과한 패킷을
+소급 차단하지는 않는다.
 
 이번 확장은 Suricata를 복제하는 작업이 아니다. 현재 AI IPS를 유지하면서 실제 활용성과 발표
 가치가 큰 기능을 안전한 순서로 추가한다. 구현 완료 기능과 장기 목표를 명확히 구분하며, 각
@@ -73,6 +78,21 @@ Rule, 설정, 데이터셋은 새 객체에 전부 읽고 검증한다. 성공�
 
 프로토콜 이름만 식별하는 것은 지원 완료가 아니다. 정상 입력, 잘린 입력, 순서 변경, 중복,
 상한 초과와 알려진 우회 형태를 자동 테스트해야 해당 기능을 지원한다고 표시한다.
+
+### 3.5 관찰·AI 분석·실제 차단은 별개다
+
+확장 권장 정책은 다음과 같다. 현재 코드에 적용된 것으로 해석하지 않는다.
+
+- 로컬 시작 Flow도 L7 관찰 대상으로 삼지만, 기존 27개 특징 모델에는 보내지 않는다.
+  시작 방향까지 검증된 프로토콜 모델이 있을 때만 분석하고 AI 이상은 알림만 제공한다.
+- 화이트리스트는 실제 차단을 면제한다. 새 L7 관찰·적중 기록과 호환 프로토콜 AI 분석까지
+  생략하지 않는다. 기존 포트 스캔·SYN Flood와 기존 Flow AI의 제외 조건은 유지한다.
+- DNS 구현 전에 128바이트 복사 한계를 보완하고, payload 길이·잘림·소유권 계약을 마련한다.
+- AI fail-open과 커널 NFQUEUE 포화 동작은 다르다. 현재 `--queue-bypass`만으로 큐 포화 시
+  통과를 보장하지 않는다.
+
+정확한 대상·예외·캡처 실패 처리는 [핵심 정책 보완](2026-09-12-core-policy-clarification-design.md)의
+2~7장을 따른다.
 
 ## 4. 전체 구조
 
@@ -312,7 +332,9 @@ Rule 문자열을 다시 해석하지 않는다. protocol·direction·port로 �
 
 ### 10.4 action 우선순위
 
-동일 패킷에 여러 Rule이 맞으면 다음 순서를 사용한다.
+동일 패킷에 여러 Rule이 맞으면 실제 차단 여부에 다음 우선순위를 사용한다.
+화이트리스트가 먼저라는 말은 새 L7 관찰도 즉시 중단한다는 뜻이 아니다. 면제된 적중은
+원래 action·실제 action·`suppressed_by=whitelist`를 기록한다.
 
 1. 전역 화이트리스트
 2. 기존 TTL BlockList
@@ -333,7 +355,9 @@ Rule 문자열을 다시 해석하지 않는다. protocol·direction·port로 �
 - `allow_outbound_drop=true`를 명시한 경우에만 outbound `drop` Rule을 허용한다.
 - Rule에도 `direction=outbound`가 명시되어야 한다.
 - outbound `alert`와 `pass`는 DROP 허용 여부와 무관하게 사용할 수 있다.
-- AI 결과는 기존처럼 inbound 후속 패킷만 차단하며 outbound 정책을 바꾸지 않는다.
+- 원격 시작 Flow의 AI 결과만 기존처럼 판정 적용 이후 원격 IP의 inbound 패킷을 차단한다.
+  로컬 시작 Flow의 AI 이상은 알림만 제공하고 어느 IP도 자동 차단하지 않는다.
+  AI가 outbound 정책을 바꾸지는 않는다.
 
 Rule 차단 팝업을 패킷마다 표시하지 않는다. Rule 결과는 EVE와 빈도 제한 glog에 기록하고, Qt는
 누적 건수와 요약만 표시한다.
@@ -588,6 +612,9 @@ parser는 원본 payload 대신 크기가 제한된 구조화 자료인 `Protoco
     "dst_ip": "198.51.100.53",
     "dst_port": 53,
     "protocol": 17,
+    "origin": "remote_initiated",
+    "local_ip": "198.51.100.53",
+    "remote_ip": "192.0.2.10",
     "first_seen_ms": 1788192000000,
     "last_seen_ms": 1788192000120,
     "end_reason": "timeout",
@@ -602,8 +629,10 @@ parser는 원본 payload 대신 크기가 제한된 구조화 자료인 `Protoco
 ```
 
 `features: [27]`은 설명용 표기이며 실제 요청에는 유한한 숫자 27개가 들어간다. Python의 AI Router는
-요청된 모델 중 입력 종류·schema·IP version이 맞는 것만 실행한다. 관찰 자료가 없거나 호환되지
-않으면 임의 값을 채우지 않고 이유와 함께 건너뛴다.
+요청된 모델 중 입력 종류·schema·IP version·`supported_flow_origins`가 맞는 것만 실행한다.
+해당 metadata가 없는 기존 모델은 원격 시작 전용으로 취급한다. 관찰 자료가 없거나 호환되지
+않으면 임의 값을 채우지 않고 이유와 함께 건너뛴다. origin과 주소의 일관성도 검증하며,
+원본 문맥과 결과 적용 정책은 핵심 정책 보완 3장을 따른다.
 
 응답은 모델별 결과와 최종 종합 결과를 함께 돌려준다.
 
@@ -654,7 +683,8 @@ DNS 이름이나 TLS SNI를 어떤 숫자로 바꿀지는 C++ parser가 결정�
 
 기존 Flow 모델은 AI 엔진의 필수 모델이다. 선택적 DNS·HTTP·TLS 모델 하나의 파일·schema·추론이
 실패해도 다른 모델과 Rule 경로는 계속 동작한다. AI queue 포화, 응답 timeout, 모든 모델 실패는
-기존 fail-open 정책대로 현재 패킷을 통과시키고 카운터와 이벤트를 남긴다.
+새 AI 차단을 만들지 않고 카운터와 이벤트를 남긴다. 기존 Rule·TTL 차단은 유지하므로
+“AI 장애 시 모든 패킷 통과”를 뜻하지 않는다.
 
 모델 load 오류와 Python 예외는 모델별로 격리한다. native library hang이나 process OOM까지 모델별
 격리하려면 별도 process가 필요하므로 졸업작품 범위에서는 AI supervisor가 전체 Python server를
@@ -665,12 +695,15 @@ DNS 이름이나 TLS SNI를 어떤 숫자로 바꿀지는 C++ parser가 결정�
 
 1. Rule의 `drop`, `pass`, `alert`는 현재 패킷 경로에서 즉시 적용한다.
 2. AI는 Flow 종료 뒤 결과가 오므로 이미 전달된 패킷을 소급 차단하지 않는다.
-3. `aggregate_anomaly=true`면 지금까지 합의한 정책대로 사용자에게 모델별 근거를 알리고, whitelist를
-   다시 확인한 뒤 동일 출발지의 후속 inbound Flow를 기존 TTL 동안 차단한다.
+3. `aggregate_anomaly=true`면 모델별 근거를 기록한다. 원본 Flow가 원격 시작이고 현재 whitelist
+   면제가 아닐 때만, 결과 적용 이후 해당 원격 IP의 inbound 패킷을 기존 TTL 동안 차단한다.
+   이미 진행 중인 연결도 대상이다. 로컬 시작·화이트리스트 Flow는 기록·알림만 제공한다.
 4. 늦게 도착한 결과, 알 수 없는 Flow, 버전이 다른 결과는 폐기한다.
 5. Rule 이벤트와 AI 이벤트는 별도로 남겨 어떤 판단이 실제 차단 원인이었는지 구분한다.
 
-Qt 알림은 모델 이름·점수·임계값과 후속 차단 TTL을 요약한다. EVE `ai` object에는 모델별 결과와
+Qt 알림은 모델 이름·점수·임계값과 실제 대응을 요약한다. 차단했을 때만 TTL을 표시하고,
+알림 전용이면 `로컬 시작 통신` 또는 `화이트리스트 면제` 이유를 표시한다. 기존 차단 IP의 중복
+결과로 TTL을 연장하거나 신규 차단 팝업을 반복하지 않는다. EVE `ai` object에는 모델별 결과와
 건너뛴 이유를 기록하되 27개 원본 특징과 민감한 프로토콜 문자열은 기본 기록하지 않는다.
 
 ### 18.6 학습 자료와 출시 조건
@@ -825,7 +858,9 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 - IPv6 Rule·화이트리스트·TTL
 - AI 장애 중 새 Rule 경로 지속
 - 선택적 프로토콜 모델 장애 중 기존 Flow AI 지속
-- AI 이상 알림과 동일 출발지 후속 inbound Flow의 TTL 차단
+- AI 이상 알림과 판정 적용 이후 동일 원격 IP의 inbound 패킷 TTL 차단(기존 연결 포함)
+- 로컬 시작·화이트리스트 Flow의 관찰·프로토콜 AI 알림과 차단 면제
+- 전체 복사·잘림 처리 및 AI 큐 포화와 NFQUEUE 포화의 구분
 
 ## 23. 측정과 완료 조건
 
@@ -847,7 +882,7 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 | 순서 | 결과물 | 다른 단계와 섞지 않을 것 |
 | --- | --- | --- |
 | 0 | 기존 오류 수정·VM 기준선 | 신규 기능 |
-| 1 | PCAP source·golden harness | DNS·Rule |
+| 1 | 캡처 길이·소유권 계약, PCAP source·golden harness | DNS·Rule |
 | 2 | DNS parser·dataset·DNS observation | TCP 재조립 |
 | 3 | event writer·Rule·상태 | L7 parser |
 | 4 | control·atomic reload | 새 Rule field |
@@ -886,6 +921,8 @@ crash, out-of-bounds, 무한 loop, 설정 상한을 넘는 메모리 증가가 �
 - 기존 `overview.md`, `online_inference.md`, `2026-08-28-online-ai-tray-design.md`는 현재 구현의
   기준이다.
 - 이 문서는 그 구현을 폐기하지 않고 위에 기능을 추가하는 확장 설계다.
+- 차단 범위·로컬 시작·화이트리스트·캡처 입력에 대해서는 2026-09-12 핵심 정책 보완이 우선한다.
+  확장 권장안은 해당 코드·테스트가 반영되기 전까지 현재 기능으로 표시하지 않는다.
 - 아직 완료되지 않은 기능을 README의 현재 기능처럼 표현하지 않는다.
 - 각 단계가 끝날 때 기존 상용 비교 문서의 `본 프로젝트`와 `처리 방침`을 실제 상태에 맞게
   갱신한다.

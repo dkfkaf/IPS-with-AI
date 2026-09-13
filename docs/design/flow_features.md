@@ -4,6 +4,10 @@
 > 대상 범위: 3번 "C++ 센서 보강" — 양방향 플로우 + 27개 특징 + FlowConsumer
 > 선행 문서: `overview.md`(개념), `stage2.md`(2단계), `code_explained.md`(코드 원리)
 
+> 특징 계산 토대의 단계별 설계다. 현재는 `AsyncAiClient`의 ZeroMQ 전송·AI 결과 적용까지 코드가 있다.
+> 아래의 ‘다음 단계’는 당시 개발 순서이며, 현재 전체 구현 상태를 뜻하지 않는다.
+> 확장 시 제출 대상은 [핵심 정책 보완](../superpowers/specs/2026-09-12-core-policy-clarification-design.md)을 따른다.
+
 ---
 
 ## 1. 이 문서의 범위
@@ -16,8 +20,7 @@
 - **안 한다**: 정규화, ZeroMQ·JSON 전송, AI 이상 이벤트·후속 플로우 차단 배선.
 
 > **왜 지금 하나**: 이 누적은 **패킷 경로에 심어야** 한다. 나중에 붙이면 패킷마다 도는 코드를
-> 다시 건드려야 하므로, 토대를 먼저 깔아둔다. 지금 소비자는 테스트뿐이지만(누적이 맞는지 검증),
-> AI 단계에서 특징을 고를 때 패킷 경로를 다시 안 건드리게 하는 게 목적이다.
+> 다시 건드려야 하므로, 토대를 먼저 깔아두었다. 현재 소비자는 테스트와 비동기 AI 전송 경로다.
 
 > 특징 목록은 `ml/features.py`의 27개 순서로 확정했다. C++와 Python이 같은 순서를 공유한다.
 
@@ -233,10 +236,11 @@ const Flow* get_flow(const FiveTuple& key) const;
 
 ---
 
-## 구현 완료 — AI-feed 레이어 (ZeroMQ 전까지)
+## 구현 경과 — AI-feed 레이어와 이후 연결
 
 2026-08-27 기준으로 27개 특징 추출과 FlowConsumer 배선을 구현했다.
-**ZeroMQ 전송·AI 이상 이벤트와 후속 플로우 차단 배선은 다음 단계다.**
+이후 ZeroMQ 전송·AI 이상 이벤트·판정 이후 수신 패킷 차단 코드도 추가됐다.
+그 계약은 [온라인 추론 설계](online_inference.md)를 따른다. 코드 존재가 VM 검증 완료를 뜻하지는 않는다.
 
 - **① 특징 벡터 추출**: `flow_to_features(const Flow&) → double[27]`. `ml/features.py`와
   동일 순서이며 packet length는 CICFlowMeter처럼 TCP/UDP payload 길이, 시간은 μs,
@@ -247,7 +251,7 @@ const Flow* get_flow(const FiveTuple& key) const;
   출발지가 시작한 활성 Flow도 모두 제거해 TTL 이후 AI 후보로 다시 나타나지 않게 한다.
 - **④ 인터페이스**: `FlowConsumer::consume(FlowRecord)`는 즉시 반환하며 거부 시 false다.
   `FlowRecord`에는 flow ID·5-튜플·시각·종료 사유·schema version·27개 특징이 들어간다.
-  현재 구현은 `LoggingFlowConsumer`, 다음 구현은 비동기 ZeroMQ 큐다.
+  현재 실행 경로는 `AsyncAiClient`의 비동기 ZeroMQ 큐이며, `LoggingFlowConsumer`는 토대 단계 구현이다.
 - **⑤ 파일 배치**: `src/ai/`에 특징 계약·Consumer를 두고, `flow_manager`와
   `packet_capture`가 Flow 종료·방출을 담당한다.
 - **⑥ 호스트 양방향 캡처**: NFQUEUE hook으로 INPUT·OUTPUT을 구분한다. 원격 시작 Flow만

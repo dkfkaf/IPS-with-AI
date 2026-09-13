@@ -1,5 +1,10 @@
 # Online AI and Qt Tray Implementation Plan
 
+> 과거 구현 계획이다. 당시의 테스트 제외 지시는 이후 사용자의 테스트 작성 요청으로 대체됐다.
+> 아래 체크박스·실행 지침은 현재 완료 상태나 신규 작업의 제약으로 사용하지 않는다.
+> 현재 기준은 [README](../../../README.md)와
+> [핵심 정책 보완](../specs/2026-09-12-core-policy-clarification-design.md)을 확인한다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 종료된 원격 Flow를 Python AI가 온라인 판정하고, 이상이면 기존 TTL로 후속 수신 패킷을 차단하면서 Qt5 트레이로 사용자에게 알린다.
