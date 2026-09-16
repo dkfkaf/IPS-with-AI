@@ -5,6 +5,10 @@ on:
     branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   # -------------------------------------------------------------
@@ -12,7 +16,8 @@ jobs:
   # -------------------------------------------------------------
   python-security:
     name: Python Security & Quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
 
     steps:
       - name: 소스코드 체크아웃
@@ -23,31 +28,61 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip' # pip 패키지 캐싱으로 속도 최적화
+          cache-dependency-path: |
+            ml/requirements.txt
+            ml/runtime-requirements.txt
 
-      - name: Python 보안 도구 설치
+      - name: Python 테스트·보안 의존성 설치
         run: |
           python -m pip install --upgrade pip
-          pip install bandit ruff
+          python -m pip install 'torch>=2.1' --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r ml/requirements.txt bandit
 
       - name: Ruff 실행 (코드 스타일 및 빠른 Linting)
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Bandit 실행 (보안 취약점 탐지)
         # -r: 하위 디렉터리 재귀 탐색
         # -ll: 중간(Medium) 및 높은(High) 위험도 취약점 검출 시 실패 처리
         # -x: 테스트 코드 디렉터리 제외
-        run: bandit -r . -ll -x ./tests
+        run: python -m bandit -r ml -ll
+
+      - name: Python 전체 단위·계약 테스트
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: root 전용 artifact 권한 테스트
+        run: |
+          secure_test_dir=$(sudo mktemp -d /root/ips-ci.XXXXXX)
+          sudo cp -R ml tests "$secure_test_dir/"
+          sudo chmod -R go-w "$secure_test_dir"
+          sudo bash -c 'cd "$1" && "$2" -m unittest discover -s tests -p test_artifacts.py -v' \
+            bash "$secure_test_dir" "$(command -v python)"
 
   # -------------------------------------------------------------
   # Job 2: C++ 정적 분석(Clang-Tidy), 빌드 최적화 및 단위 테스트
   # -------------------------------------------------------------
   cpp-build-and-analyze:
     name: C++ Clang-Tidy & CMake Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
 
     steps:
       - name: 소스코드 체크아웃
         uses: actions/checkout@v4
+
+      - name: CTest Python 환경 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: ml/runtime-requirements.txt
+
+      - name: 온라인 AI 테스트 의존성 설치
+        run: |
+          python -m pip install 'torch>=2.1' --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r ml/runtime-requirements.txt
 
       - name: C++ 빌드 필수 패키지 및 라이브러리 설치
         run: |
@@ -58,7 +93,14 @@ jobs:
             clang-tidy \
             clang \
             ccache \
-            libpcap-dev # IPS 필수 네트워크 패키지 라이브러리 예시
+            pkg-config \
+            libnetfilter-queue-dev \
+            libgoogle-glog-dev \
+            nlohmann-json3-dev \
+            libzmq3-dev \
+            cppzmq-dev \
+            qtbase5-dev \
+            libgtest-dev
 
       - name: ccache 설정 (C++ 재컴파일 시간 대폭 단축)
         uses: hendrikmuhs/ccache-action@v1.2
@@ -71,7 +113,8 @@ jobs:
         # CMake 빌드 시 Clang-Tidy를 함께 실행하도록 설정
         # 경고(Warning) 발생 시 에러로 간주(-warnings-as-errors=*)하여 빌드 중단
         run: |
-          cmake -B build -G Ninja \
+          cmake -S . -B build -G Ninja \
+            -DPython3_EXECUTABLE="$(command -v python)" \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-warnings-as-errors=*" \

@@ -94,8 +94,13 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -p "test_*.py"
 ```
 
-현재 `test_plot.PlotTest.test_run_uses_loaded_artifact_contract`는 `plot.run()`의 artifact 로더
-계약을 수정하기 전까지 실패하는 릴리스 차단 테스트입니다.
+`test_plot.PlotTest.test_run_uses_loaded_artifact_contract`는 실제 artifact와 CSV에서 PNG 세 개를
+생성하는 회귀 테스트입니다. 수정 결과와 Kali 실행 절차는
+[안정화 검증 기록](docs/validation/2026-09-15-baseline.md)에 정리했습니다.
+
+현재 데이터의 분할·중복 기록은 `python -m ml.audit_dataset --data 'data/*.csv' --output
+data/split-audit-first.json`으로 생성할 수 있습니다. 이 도구는 날짜·세션 누수 없음을 인증하거나
+기존 학습 분할을 변경하지 않습니다. 자세한 해석은 검증 기록 4장을 참고하세요.
 
 NFQUEUE·재시작·Qt 알림은 별도 통합 검증 범위입니다.
 
@@ -140,8 +145,11 @@ iptables -S IPS_WITH_AI
 | [핵심 정책 보완](docs/superpowers/specs/2026-09-12-core-policy-clarification-design.md) | 차단 범위·로컬 통신·화이트리스트·캡처 입력의 현재 상태와 확장 권장안 |
 | [Suricata 장점 확장 설계](docs/superpowers/specs/2026-09-01-suricata-inspired-expansion-design.md) | DNS·Rule·EVE·재조립·L7·IPv6 단계별 확장 |
 | [상용 제품 대비](docs/design/commercial_comparison.md) | 상용 IPS/NGFW와의 기능 차이와 프로젝트 범위 |
+| [DevOps·IaC 학습 로드맵](docs/design/devops_iac_learning_roadmap.md) | GitHub Actions·Compose·Ansible·OpenTofu/Terraform·Prometheus/Grafana 학습 순서 |
 | [코드 원리](docs/code_explained.md) | 코드가 왜 이렇게 짜였나 (1·2단계) |
 | [코딩 스타일](docs/coding_style.md) | 어떻게 짜는가 |
+| [안정화 검증 기록·Kali 절차](docs/validation/2026-09-15-baseline.md) | Python 검사 결과와 Linux·실데이터 미검증 항목 |
+| [기존 기능 검증 실행 안내](docs/validation/existing-features-checklist.md) | 검증 항목 14개, 실행 명령·정상 결과·실패 확인·결과 기록표 |
 
 ## 개발 로드맵
 

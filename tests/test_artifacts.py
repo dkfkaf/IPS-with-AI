@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 from ml.artifacts import load_artifacts
-from ml.features import FEATURES, FEATURE_SCHEMA_VERSION
+from ml.features import FEATURE_SCHEMA_VERSION, FEATURES
 from ml.model import Autoencoder
 
 

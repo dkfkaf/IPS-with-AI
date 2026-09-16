@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ml.features import FEATURES, FEATURE_SCHEMA_VERSION
+from ml.features import FEATURE_SCHEMA_VERSION, FEATURES
 from ml.model import Autoencoder
 
 

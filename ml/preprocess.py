@@ -37,12 +37,16 @@ def split_benign(feature_matrix, labels, ratios=(0.6, 0.2, 0.2), seed=42):
     """특징 행렬에서 정상(BENIGN)만 train/val/test로 나눠 돌려준다.
     오토인코더는 정상만 학습하므로 정상을 나눠 쓴다. 공격은 호출자가 라벨로 직접 뽑는다
     (평가는 라벨별 탐지율이 필요해 attack을 여기서 미리 떼어줄 이득이 없다)."""
-    benign = feature_matrix[labels == BENIGN_LABEL]
+    return tuple(
+        feature_matrix[indices] for indices in split_benign_indices(labels, ratios, seed)
+    )
+
+
+def split_benign_indices(labels, ratios=(0.6, 0.2, 0.2), seed=42):
+    """기존 정상 분할 순서를 유지하면서 원본 유효 행의 인덱스를 반환한다."""
+    benign_indices = np.flatnonzero(labels == BENIGN_LABEL)
     rng = np.random.default_rng(seed)
-    idx = rng.permutation(len(benign))
-    n_train = int(len(benign) * ratios[0])
-    n_val = int(len(benign) * ratios[1])
-    train = benign[idx[:n_train]]
-    val = benign[idx[n_train : n_train + n_val]]
-    test = benign[idx[n_train + n_val :]]
-    return train, val, test
+    indices = benign_indices[rng.permutation(len(benign_indices))]
+    n_train = int(len(indices) * ratios[0])
+    n_val = int(len(indices) * ratios[1])
+    return indices[:n_train], indices[n_train : n_train + n_val], indices[n_train + n_val :]

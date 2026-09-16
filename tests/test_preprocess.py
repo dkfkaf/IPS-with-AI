@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from ml.features import BENIGN_LABEL, FEATURES, LABEL_COLUMN
-from ml.preprocess import extract_features, load_dataset, split_benign
+from ml.preprocess import extract_features, load_dataset, split_benign, split_benign_indices
 
 
 def make_row(value: float, label: str) -> dict[str, object]:
@@ -60,6 +60,29 @@ class PreprocessTest(unittest.TestCase):
         combined = np.concatenate(first_split)
         expected_rows = {tuple(row) for row in feature_matrix[:6]}
         self.assertEqual({tuple(row) for row in combined}, expected_rows)
+
+    def test_split_indices_preserve_original_rows_and_existing_seed_order(self):
+        labels = np.array([BENIGN_LABEL, "DDoS", BENIGN_LABEL, BENIGN_LABEL, "DDoS",
+                           BENIGN_LABEL, BENIGN_LABEL, "PortScan", BENIGN_LABEL])
+        features = np.arange(18, dtype=np.float64).reshape(9, 2)
+
+        indices = split_benign_indices(labels, seed=7)
+        splits = split_benign(features, labels, seed=7)
+
+        for actual, expected, split in zip(indices, ([8, 3, 0], [6], [2, 5]), splits):
+            np.testing.assert_array_equal(actual, expected)
+            np.testing.assert_array_equal(split, features[expected])
+        combined = np.concatenate(indices)
+        self.assertEqual(len(set(combined)), len(combined))
+        self.assertEqual(set(combined), {0, 2, 3, 5, 6, 8})
+
+    def test_split_indices_keep_custom_ratios_and_empty_benign_behavior(self):
+        labels = np.array([BENIGN_LABEL] * 10 + ["DDoS"])
+        indices = split_benign_indices(labels, ratios=(0.5, 0.3, 0.2))
+        for actual, expected in zip(indices, ([5, 6, 0, 7, 3], [2, 4, 9], [1, 8])):
+            np.testing.assert_array_equal(actual, expected)
+        empty = split_benign_indices(np.array(["DDoS"]))
+        self.assertEqual([len(part) for part in empty], [0, 0, 0])
 
 
 if __name__ == "__main__":

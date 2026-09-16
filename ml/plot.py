@@ -91,26 +91,29 @@ def _plot_roc(benign_err, attack_err, threshold, path):
 
 def run(csv_glob):
     """평가 데이터로 발표용 그래프 세 장을 생성해 artifacts 아래에 저장한다."""
-    model, mean, scale, threshold = load_artifacts()
+    artifacts = load_artifacts(ARTIFACTS)
     feature_matrix, labels = load_dataset(csv_glob)
     _train, _val, benign_test = split_benign(feature_matrix, labels)
     attack_mask = labels != BENIGN_LABEL
     attack_errors = normalized_reconstruction_errors(
-        model, mean, scale, feature_matrix[attack_mask]
+        artifacts.model, artifacts.mean, artifacts.scale, feature_matrix[attack_mask]
     )
-    benign_errors = normalized_reconstruction_errors(model, mean, scale, benign_test)
+    benign_errors = normalized_reconstruction_errors(
+        artifacts.model, artifacts.mean, artifacts.scale, benign_test
+    )
 
     os.makedirs(PLOTS, exist_ok=True)
     _plot_error_distribution(
-        benign_errors, attack_errors, threshold, os.path.join(PLOTS, "error_distribution.png")
+        benign_errors, attack_errors, artifacts.threshold,
+        os.path.join(PLOTS, "error_distribution.png")
     )
     _plot_detection_by_type(
         attack_errors,
         labels[attack_mask],
-        threshold,
+        artifacts.threshold,
         os.path.join(PLOTS, "detection_by_type.png"),
     )
-    _plot_roc(benign_errors, attack_errors, threshold, os.path.join(PLOTS, "roc.png"))
+    _plot_roc(benign_errors, attack_errors, artifacts.threshold, os.path.join(PLOTS, "roc.png"))
     print(f"그래프 3장 저장 완료 → {PLOTS}")
 
 

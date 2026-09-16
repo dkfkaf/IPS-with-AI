@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from sklearn.preprocessing import StandardScaler
 
-from ml.features import FEATURES, FEATURE_SCHEMA_VERSION
+from ml.features import FEATURE_SCHEMA_VERSION, FEATURES
 from ml.model import Autoencoder, reconstruction_errors
 from ml.preprocess import load_dataset, split_benign
 

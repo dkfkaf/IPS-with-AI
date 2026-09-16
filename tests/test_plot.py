@@ -1,17 +1,20 @@
 """평가 그래프 생성 함수가 PNG 산출물을 만드는지 검증한다."""
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import matplotlib
 import numpy as np
+import pandas as pd
+import torch
 
-from ml.features import BENIGN_LABEL
+from ml.features import BENIGN_LABEL, FEATURE_SCHEMA_VERSION, FEATURES, LABEL_COLUMN
+from ml.model import Autoencoder
 from ml.plot import (
     _plot_detection_by_type,
     _plot_error_distribution,
@@ -63,37 +66,40 @@ class PlotTest(unittest.TestCase):
         )
 
     def test_run_uses_loaded_artifact_contract(self):
-        artifacts = SimpleNamespace(
-            model=object(),
-            mean=np.zeros(2),
-            scale=np.ones(2),
-            threshold=0.5,
-        )
-        feature_matrix = np.arange(8, dtype=np.float64).reshape(4, 2)
-        labels = np.array([BENIGN_LABEL, BENIGN_LABEL, "DDoS", "PortScan"])
-        benign_test = feature_matrix[:2]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model = Autoencoder(len(FEATURES))
+            torch.save(model.state_dict(), directory / "autoencoder.pt")
+            np.savez(directory / "scaler.npz", mean=np.zeros(27), scale=np.ones(27))
+            metadata = {
+                "features": FEATURES,
+                "n_features": 27,
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
+                "model_version": "ae-plot-test",
+                "threshold": 0.5,
+            }
+            (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            frame = pd.DataFrame(np.arange(324).reshape(12, 27) / 100, columns=FEATURES)
+            frame[LABEL_COLUMN] = [BENIGN_LABEL] * 10 + ["DDoS", "PortScan"]
+            csv_path = directory / "flows.csv"
+            frame.to_csv(csv_path, index=False)
+            plots = directory / "plots"
 
-        with (
-            patch("ml.plot.load_artifacts", autospec=True, return_value=artifacts),
-            patch("ml.plot.load_dataset", return_value=(feature_matrix, labels)),
-            patch(
-                "ml.plot.split_benign",
-                return_value=(np.empty((0, 2)), np.empty((0, 2)), benign_test),
-            ),
-            patch(
-                "ml.plot.normalized_reconstruction_errors",
-                side_effect=[np.array([0.8, 0.9]), np.array([0.1, 0.2])],
-            ),
-            patch("ml.plot._plot_error_distribution") as distribution_mock,
-            patch("ml.plot._plot_detection_by_type") as detection_mock,
-            patch("ml.plot._plot_roc") as roc_mock,
-            redirect_stdout(io.StringIO()),
-        ):
-            run("data/*.csv")
+            with (
+                patch("ml.plot.ARTIFACTS", str(directory)),
+                patch("ml.plot.PLOTS", str(plots)),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                result = run(str(csv_path))
 
-        distribution_mock.assert_called_once()
-        detection_mock.assert_called_once()
-        roc_mock.assert_called_once()
+            self.assertIsNone(result)
+            self.assertEqual(output.getvalue(), f"그래프 3장 저장 완료 → {plots}\n")
+            self.assertEqual(
+                {path.name for path in plots.iterdir()},
+                {"error_distribution.png", "detection_by_type.png", "roc.png"},
+            )
+            for path in plots.iterdir():
+                self.assertEqual(path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
     def _assert_plot_written(self, filename, plot_function, *arguments):
         with tempfile.TemporaryDirectory() as temporary:

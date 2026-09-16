@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from ml.artifacts import LoadedArtifacts
-from ml.features import FEATURES, FEATURE_SCHEMA_VERSION
+from ml.features import FEATURE_SCHEMA_VERSION, FEATURES
 from ml.online_server import (
     FEATURE_COUNT_MISMATCH,
     FEATURE_SCHEMA_MISMATCH,
