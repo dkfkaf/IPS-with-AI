@@ -87,7 +87,10 @@ jobs:
       - name: C++ 빌드 필수 패키지 및 라이브러리 설치
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          apt-cache policy libgoogle-glog-dev libunwind-dev libunwind8 libunwind-14-dev
+          apt-mark showhold
+          # Jammy의 glog 의존성을 명시해 APT가 libunwind 개발 패키지 선택을 해결하게 한다.
+          sudo apt-get -o Debug::pkgProblemResolver=yes install -y \
             cmake \
             ninja-build \
             clang-tidy \
@@ -95,6 +98,7 @@ jobs:
             ccache \
             pkg-config \
             libnetfilter-queue-dev \
+            libunwind-dev \
             libgoogle-glog-dev \
             nlohmann-json3-dev \
             libzmq3-dev \
